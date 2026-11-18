@@ -432,6 +432,97 @@ export class RobloxAudioManager {
     });
   }
 
+  playFart(mega = false, variant = 0) {
+    if (!this._canSfx()) return;
+    const ctx = this._ctx;
+    const now = ctx.currentTime + 0.005;
+
+    // Synthesize comical raspy cartoon fart via LFO-fluttered sawtooth + resonant lowpass + airy puff
+    const dur = mega ? 0.78 : variant === 1 ? 0.24 : variant === 2 ? 0.44 : 0.36;
+    const startFreq = mega ? 96 : variant === 1 ? 185 : variant === 2 ? 112 : 88;
+    const endFreq = mega ? 34 : variant === 1 ? 118 : variant === 2 ? 48 : 42;
+    const flutterHz = mega ? 21 : variant === 1 ? 34 : variant === 2 ? 26 : 23;
+    const flutterDepth = mega ? 26 : variant === 1 ? 30 : 20;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(startFreq, now);
+    if (mega) {
+      osc.frequency.exponentialRampToValueAtTime(52, now + 0.28);
+      osc.frequency.linearRampToValueAtTime(84, now + 0.42);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, now + dur);
+    } else if (variant === 1) {
+      // Comical squeaky high-toot
+      osc.frequency.exponentialRampToValueAtTime(240, now + 0.09);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, now + dur);
+    } else if (variant === 2) {
+      // Bubbly double-putt rumble
+      osc.frequency.exponentialRampToValueAtTime(64, now + 0.16);
+      osc.frequency.linearRampToValueAtTime(104, now + 0.22);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, now + dur);
+    } else {
+      osc.frequency.exponentialRampToValueAtTime(endFreq, now + dur);
+    }
+
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.setValueAtTime(flutterHz, now);
+    lfo.frequency.linearRampToValueAtTime(flutterHz * 0.65, now + dur);
+
+    const lfoFreqGain = ctx.createGain();
+    lfoFreqGain.gain.setValueAtTime(flutterDepth, now);
+    lfo.connect(lfoFreqGain);
+    lfoFreqGain.connect(osc.frequency);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(mega ? 460 : variant === 1 ? 760 : 520, now);
+    filter.frequency.exponentialRampToValueAtTime(mega ? 190 : 220, now + dur);
+    filter.Q.value = mega ? 6.2 : 4.8;
+
+    const lfoFilterGain = ctx.createGain();
+    lfoFilterGain.gain.setValueAtTime(mega ? 180 : 140, now);
+    lfo.connect(lfoFilterGain);
+    lfoFilterGain.connect(filter.frequency);
+
+    const env = ctx.createGain();
+    const peak = mega ? 0.56 : 0.44;
+    env.gain.setValueAtTime(0.0001, now);
+    env.gain.linearRampToValueAtTime(peak, now + 0.018);
+    env.gain.setValueAtTime(peak * 0.85, now + dur * 0.65);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    osc.connect(filter);
+    filter.connect(env);
+    env.connect(this._sfxGain);
+
+    osc.start(now);
+    lfo.start(now);
+    osc.stop(now + dur + 0.03);
+    lfo.stop(now + dur + 0.03);
+
+    // Airy puff burst + optional comical squeak tail on mega fart
+    this._sfxNoise({
+      delay: 0.01,
+      dur: Math.min(0.45, dur * 0.72),
+      gain: mega ? 0.22 : 0.14,
+      filterType: 'bandpass',
+      freq: variant === 1 ? 620 : 340,
+      q: 1.8,
+    });
+    if (mega) {
+      this._sfxTone({
+        freq: 290,
+        endFreq: 195,
+        type: 'triangle',
+        delay: dur * 0.78,
+        dur: 0.14,
+        gain: 0.22,
+        attack: 0.005,
+      });
+    }
+  }
+
   dispose() {
     if (this._fallbackTimer) {
       clearInterval(this._fallbackTimer);

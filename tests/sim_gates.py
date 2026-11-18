@@ -1003,7 +1003,74 @@ async def run_all_gates():
             assert ipad_tap['zAfterSpread'] < ipad_tap['zBefore'] - 0.1, f'2-finger pinch zoom-in failed: {ipad_tap}'
             assert ipad_tap['furnAfter'] == ipad_tap['furnBefore'] + 1, f'Tap-to-place floor tile in Pawn Shop failed: {ipad_tap}'
             assert ipad_tap['buildCalls'] <= 85, f'Build mode draw calls > 85: {ipad_tap["buildCalls"]}'
-            print(f"  PASS (auto-detect iPad, dir-drive {ipad_check['speedMph']:.1f} MPH, tap-walk Billy, pinch zoom {ipad_tap['zBefore']:.2f}->{ipad_tap['zAfterSpread']:.2f}, build tap-place calls={ipad_tap['buildCalls']})")
+
+            # 8c. Fart Action Verification (On-foot green 3D cloud + Billy reaction, 5th Mega Fart, Car Turbo Toot Boost, Auction distraction, 0 leaks!)
+            fart_chk = await cdp.eval('''(() => {
+                const api = window.__ROBLOX_STORAGE__;
+                const g = api._game;
+                api.resetSave();
+                g.ui.dismissAlerts();
+                // Stand near Billy facing North so green 3D cloud billows right toward camera & Billy reacts!
+                g.player.x = -19.5; g.player.z = -3.8; g.player.yaw = Math.PI;
+                g.setCameraOrbit(Math.PI, 0.28);
+                g._updateCamera(1.0);
+                api.step(1/30, 2);
+
+                const btnFartVis = !document.getElementById('btn-touch-fart').classList.contains('hidden');
+                const topFartVis = Boolean(document.getElementById('btn-fart'));
+                const ok1 = api.triggerFart();
+                api.step(1/30, 5);
+                api.render();
+                const puffsAfter1 = api.getState().activeFartPuffs;
+                const bubblesAfter1 = g.bubbles.length;
+                const hopY = g.player.y;
+                const callsFart = api.rendererInfo.calls;
+
+                // Trigger up to 5th fart -> Mega Fart (18 puffs!)
+                for (let k = 0; k < 4; k++) {
+                    g.fartCooldown = 0;
+                    api.triggerFart();
+                }
+                const count5 = api.getState().fartCount;
+                const puffsMega = api.getState().activeFartPuffs;
+                api.step(1/30, 4);
+                api.render();
+                return { btnFartVis, topFartVis, ok1, puffsAfter1, bubblesAfter1, hopY, callsFart, count5, puffsMega };
+            })()''')
+            assert fart_chk['btnFartVis'] is True and fart_chk['topFartVis'] is True, f'Fart buttons missing: {fart_chk}'
+            assert fart_chk['ok1'] is True and fart_chk['puffsAfter1'] >= 9, f'Fart puffs failed: {fart_chk}'
+            assert fart_chk['bubblesAfter1'] >= 1, f'Nearby Billy did not react to fart: {fart_chk}'
+            assert fart_chk['hopY'] > 0.05, f'Comic hop did not fire on foot fart: {fart_chk}'
+            assert fart_chk['count5'] == 5 and fart_chk['puffsMega'] >= 18, f'5th Mega Fart failed: {fart_chk}'
+            assert fart_chk['callsFart'] <= 85, f'Draw calls with fart cloud > 85: {fart_chk}'
+            await cdp.screenshot(CAP_DIR / '10_ipad_fart_action.png')
+
+            # Verify Car Exhaust Turbo Toot Boost while driving & Auction distraction cough
+            fart_extra = await cdp.eval('''(() => {
+                const api = window.__ROBLOX_STORAGE__;
+                const g = api._game;
+                g.car.x = 0; g.car.z = 8.6; g.car.yaw = Math.PI * 0.5; g.car.speed = 6.0;
+                api.toggleDrive();
+                g.fartCooldown = 0;
+                const spdBefore = g.car.speed;
+                api.triggerFart();
+                const spdAfter = g.car.speed;
+                const boostTimer = g.car.boostTimer;
+                api.toggleDrive();
+
+                api.startAuction('A2');
+                api.step(1/30, 4);
+                g.fartCooldown = 0;
+                const cdBefore = g.auction.rivalBidCountdown;
+                const aucFart = api.triggerFart();
+                const cdAfter = g.auction.rivalBidCountdown;
+                api.passAuction();
+                return { spdBefore, spdAfter, boostTimer, aucFart, cdBefore, cdAfter };
+            })()''')
+            assert fart_extra['spdAfter'] > fart_extra['spdBefore'] + 3.0 and fart_extra['boostTimer'] > 0.5, f'Car Turbo Toot Boost failed: {fart_extra}'
+            assert fart_extra['aucFart'] is True and fart_extra['cdAfter'] > fart_extra['cdBefore'] + 0.2, f'Auction fart distraction failed: {fart_extra}'
+
+            print(f"  PASS (auto-detect iPad, dir-drive {ipad_check['speedMph']:.1f} MPH, tap-walk Billy, pinch zoom {ipad_tap['zBefore']:.2f}->{ipad_tap['zAfterSpread']:.2f}, build tap-place calls={ipad_tap['buildCalls']}, fart puffs={fart_chk['puffsMega']} boost={fart_extra['spdAfter']:.1f})")
 
             # Hero 1280x800 screenshot.jpg (Open Locker A2 lively auction scene with player, rivals, Auctioneer, lime A2 graffiti, full Roblox HUD!)
             await cdp.set_viewport(1280, 800, False, False)

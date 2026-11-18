@@ -153,6 +153,7 @@ export class RobloxUI {
     this.el = {
       btnMenu: document.getElementById('btn-menu'),
       btnChat: document.getElementById('btn-chat'),
+      btnFart: document.getElementById('btn-fart'),
       btnChatClose: document.getElementById('btn-chat-close'),
       chatPanel: document.getElementById('chat-panel'),
       chatMessages: document.getElementById('chat-messages'),
@@ -241,6 +242,7 @@ export class RobloxUI {
       stickKnob: document.getElementById('touch-stick-knob'),
       touchRightBtns: document.getElementById('touch-right-btns'),
       btnTouchInteract: document.getElementById('btn-touch-interact'),
+      btnTouchFart: document.getElementById('btn-touch-fart'),
       btnTouchJump: document.getElementById('btn-touch-jump'),
 
       // Modals
@@ -327,6 +329,12 @@ export class RobloxUI {
         this.el.lbPanel.classList.remove('open');
       }
     });
+    if (this.el.btnFart) {
+      this.el.btnFart.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (this.cb.onFart) this.cb.onFart();
+      });
+    }
     this.el.btnChatClose.addEventListener('click', () => {
       this.el.chatPanel.classList.add('hidden');
     });
@@ -460,6 +468,13 @@ export class RobloxUI {
       e.stopPropagation();
       this.cb.onTouchJump();
     });
+    if (this.el.btnTouchFart) {
+      this.el.btnTouchFart.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.cb.onFart) this.cb.onFart();
+      });
+    }
     this.el.btnTouchInteract.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();

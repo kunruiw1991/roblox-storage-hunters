@@ -48,6 +48,7 @@ const ui = new RobloxUI({
     }
   },
   onTouchJump: () => game && game.queueJump(),
+  onFart: () => game && game.triggerFart(),
   onModalChange: (modal) => {
     if (game && modal) {
       game.keys.clear();
@@ -112,6 +113,8 @@ window.addEventListener('keydown', (e) => {
 
   if (e.code === 'KeyE') {
     game.triggerInteract();
+  } else if (e.code === 'KeyG') {
+    game.triggerFart();
   } else if (e.code === 'Space') {
     if (game.auction.active) game.placeBid();
     else game.queueJump();
@@ -299,6 +302,7 @@ window.__ROBLOX_STORAGE__ = {
     game._updateCamera(1.0);
   },
   triggerInteract: () => game.triggerInteract(),
+  triggerFart: () => game.triggerFart(),
   startAuction: (bayId) => game.startAuction(bayId),
   placeBid: () => game.placeBid(),
   passAuction: () => game.passAuction(),

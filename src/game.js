@@ -293,6 +293,7 @@ export class StorageHuntersGame {
       cargo: [],
       overweight: false,
       overweightFlash: 0,
+      boostTimer: 0,
     };
 
     // Hotbar: slot 0 = Inspect Lens (null in array), slots 1..8 = carried items
@@ -303,6 +304,12 @@ export class StorageHuntersGame {
     this.navTarget = null; // { x, z, label, key }
     this.walkTarget = null;
     this.camZoomScale = 1.0;
+
+    // Fart action state (zero leaks — pooled InstancedMesh in world.js)
+    this.fartCount = 0;
+    this.fartCooldown = 0;
+    this.fartPuffs = [];
+    this.world.updateFartPuffs(this.fartPuffs);
 
     // Shop build state
     this.buildTab = null; // 'BUILD' | 'SHELVES' | 'DECOR' | null
@@ -771,6 +778,147 @@ export class StorageHuntersGame {
   queueJump() {
     if (this.player.driving || this.auction.active || this.ui.activeModal) return;
     this.jumpQueued = true;
+  }
+
+  triggerFart() {
+    this.audio.unlock();
+    if (this.ui.activeModal || this.fartCooldown > 0) return false;
+
+    this.fartCount += 1;
+    const isMega = this.fartCount % 5 === 0;
+    const variant = (this.fartCount - 1) % 3;
+    this.fartCooldown = isMega ? 0.65 : 0.42;
+
+    this.audio.playFart(isMega, variant);
+
+    // Spawn origin: behind R6 hips on foot, or behind rear bumper exhaust pipe when driving!
+    const yaw = this.player.driving ? this.car.yaw : this.player.yaw;
+    const backX = -Math.sin(yaw);
+    const backZ = -Math.cos(yaw);
+    const sideX = Math.cos(yaw);
+    const sideZ = -Math.sin(yaw);
+    const ox = (this.player.driving ? this.car.x : this.player.x) + backX * (this.player.driving ? 2.55 : 0.52);
+    const oz = (this.player.driving ? this.car.z : this.player.z) + backZ * (this.player.driving ? 2.55 : 0.52);
+    const oy = this.player.driving ? 0.58 : this.player.y + 0.88;
+
+    const palette = isMega
+      ? [0x84cc16, 0xa3e635, 0x4ade80, 0xbef264, 0x65a30d]
+      : [0x84cc16, 0xa3e635, 0x65a30d, 0xbef264];
+    const puffCount = isMega ? 18 : 9;
+    for (let i = 0; i < puffCount; i++) {
+      if (this.fartPuffs.length >= 32) this.fartPuffs.shift();
+      const spread = isMega ? 2.8 : 1.55;
+      const lat = (this.rng() - 0.5) * spread;
+      const backSpd = (isMega ? 2.6 : 1.6) + this.rng() * (isMega ? 2.6 : 1.4);
+      const upSpd = (isMega ? 1.8 : 1.1) + this.rng() * (isMega ? 2.4 : 1.2);
+      const maxLife = (isMega ? 1.35 : 0.95) + this.rng() * 0.55;
+      this.fartPuffs.push({
+        x: ox + sideX * lat * 0.28 + backX * this.rng() * 0.35,
+        y: oy + (this.rng() - 0.3) * 0.35,
+        z: oz + sideZ * lat * 0.28 + backZ * this.rng() * 0.35,
+        vx: backX * backSpd + sideX * lat,
+        vy: upSpd,
+        vz: backZ * backSpd + sideZ * lat,
+        rx: this.rng() * Math.PI,
+        ry: this.rng() * Math.PI,
+        rz: this.rng() * Math.PI,
+        vrx: (this.rng() - 0.5) * 4.5,
+        vry: (this.rng() - 0.5) * 4.5,
+        age: 0,
+        maxLife,
+        baseScale: (isMega ? 0.95 : 0.62) + this.rng() * (isMega ? 1.05 : 0.55),
+        scale: 0.25,
+        color: palette[i % palette.length],
+      });
+    }
+    this.world.updateFartPuffs(this.fartPuffs);
+
+    // Physical comedy feedback: comic hop on foot, Turbo Toot Boost in car, rival cough in auction!
+    if (this.player.driving) {
+      const tier = CAR_TIERS[this.carTier] || CAR_TIERS[0];
+      const boost = isMega ? 8.5 : 4.6;
+      this.car.boostTimer = Math.max(this.car.boostTimer || 0, isMega ? 1.15 : 0.65);
+      this.car.speed = clamp(this.car.speed + boost, -tier.speed * 0.55, tier.speed * 1.28);
+    } else if (!this.auction.active) {
+      this.player.celebrateTimer = Math.max(this.player.celebrateTimer, isMega ? 0.65 : 0.35);
+      if (!this.player.airborne) {
+        this.player.vy = isMega ? 7.6 : 4.3;
+        this.player.airborne = true;
+      }
+    } else if (this.auction.active && !this.auction.resolved) {
+      this.auction.rivalBidCountdown += isMega ? 0.55 : 0.30;
+    }
+
+    // Floating cartoon sound pop above player
+    const popTexts = isMega
+      ? ['MEGA FART!! 💨', 'KABOOM TOOT!! 💨']
+      : ['PFFFRT! 💨', 'TOOT! 💨', 'PRRRRT! 💨'];
+    const popLabel = popTexts[this.fartCount % popTexts.length];
+    this.ui.spawnFloatPop(
+      popLabel,
+      {
+        x: this.player.driving ? this.car.x : this.player.x,
+        y: (this.player.driving ? 2.2 : this.player.y + 2.35),
+        z: this.player.driving ? this.car.z : this.player.z,
+      },
+      this.camera,
+      window.innerWidth,
+      window.innerHeight,
+      isMega ? '#bef264' : '#a3e635'
+    );
+
+    // Nearby NPC & Rival funny reactions!
+    const px = this.player.driving ? this.car.x : this.player.x;
+    const pz = this.player.driving ? this.car.z : this.player.z;
+    const reactors = [];
+    const npcReactList = [
+      { id: 'billy', x: NPCS.billy.x, z: NPCS.billy.z, lines: ['EW!! Who stepped on a frog?!', 'PEW!! Keep it on the court!'] },
+      { id: 'sal', x: NPCS.sal.x, z: NPCS.sal.z, lines: ['Whoa! Check your exhaust pipe!', 'HAHAHA gross!'] },
+      { id: 'rick', x: NPCS.rick.x, z: NPCS.rick.z, lines: ['Open a window in my shop!', 'Best I can do is $5 for that smell!'] },
+    ];
+    for (const n of npcReactList) {
+      const d = Math.hypot(px - n.x, pz - n.z);
+      if (d <= 14.0) reactors.push({ d, x: n.x, y: 2.75, z: n.z, text: n.lines[this.fartCount % n.lines.length] });
+    }
+    if (this.npcRigs.auctioneer.group.visible) {
+      const ap = this.npcRigs.auctioneer.group.position;
+      const d = Math.hypot(px - ap.x, pz - ap.z);
+      if (d <= 14.0) {
+        const lines = isMega
+          ? ['WHOA!! MEGA CLOUD! *COUGH*', 'GOING ONCE... *COUGH*!']
+          : ['EW! Not at the auction!', 'Back up everybody!'];
+        reactors.push({ d, x: ap.x, y: 2.85, z: ap.z, text: lines[this.fartCount % lines.length] });
+      }
+    }
+    for (let i = 0; i < this.rivalRigs.length; i++) {
+      const r = this.rivalRigs[i];
+      if (!r.rig.group.visible) continue;
+      const rp = r.rig.group.position;
+      const d = Math.hypot(px - rp.x, pz - rp.z);
+      if (d <= 14.0) {
+        r.celebrateTimer = Math.max(r.celebrateTimer, 0.85);
+        const lines = ['EW!! Gross!!', 'My eyes are watering!', 'Distraction fart?!', 'PEW!! Who did that?!'];
+        reactors.push({ d, x: rp.x, y: 2.65, z: rp.z, text: lines[(this.fartCount + i) % lines.length] });
+      }
+    }
+    for (const s of this.shoppers) {
+      if (!s.rig.group.visible || s.state === 'idle') continue;
+      const d = Math.hypot(px - s.x, pz - s.z);
+      if (d <= 13.0) {
+        const lines = ['PEW!! Smells funky in here!', 'HAHAHA excuse you!'];
+        reactors.push({ d, x: s.x, y: 2.65, z: s.z, text: lines[(this.fartCount + s.idx) % lines.length] });
+      }
+    }
+    reactors.sort((a, b) => a.d - b.d);
+    for (let i = 0; i < Math.min(2, reactors.length); i++) {
+      const rec = reactors[i];
+      this._addBubble(rec.x, rec.y, rec.z, rec.text, 2.2, isMega);
+    }
+
+    if (isMega) {
+      this.ui.addChatLine('You', 'unleashed a MEGA FART cloud! Everyone coughed!');
+    }
+    return true;
   }
 
   setInput(x, z) {
@@ -2219,8 +2367,12 @@ export class StorageHuntersGame {
     this.simTime += dt;
     this.clockMinutes = (this.clockMinutes + dt * 0.45) % (24 * 60);
     if (this.oddJobCooldown > 0) this.oddJobCooldown = Math.max(0, this.oddJobCooldown - dt);
+    if (this.fartCooldown > 0) this.fartCooldown = Math.max(0, this.fartCooldown - dt);
     if (this.car.overweightFlash > 0) {
       this.car.overweightFlash = Math.max(0, this.car.overweightFlash - dt);
+    }
+    if (this.car.boostTimer > 0) {
+      this.car.boostTimer = Math.max(0, this.car.boostTimer - dt);
     }
     if (this.player.celebrateTimer > 0) {
       this.player.celebrateTimer = Math.max(0, this.player.celebrateTimer - dt);
@@ -2455,6 +2607,31 @@ export class StorageHuntersGame {
       this.world.updateChevrons(0, 0, null, null, 0);
     }
 
+    // Update blocky green Roblox fart cloud puffs
+    if (this.fartPuffs.length > 0) {
+      for (let i = this.fartPuffs.length - 1; i >= 0; i--) {
+        const p = this.fartPuffs[i];
+        p.age += dt;
+        if (p.age >= p.maxLife) {
+          this.fartPuffs.splice(i, 1);
+          continue;
+        }
+        const t = p.age / p.maxLife;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.z += p.vz * dt;
+        p.vx *= Math.max(0, 1 - dt * 2.1);
+        p.vz *= Math.max(0, 1 - dt * 2.1);
+        p.vy = Math.max(0.35, p.vy * Math.max(0, 1 - dt * 1.1));
+        p.rx += p.vrx * dt;
+        p.ry += p.vry * dt;
+        // Billow up fast, then shrink cleanly to 0 before expiring
+        const env = t < 0.22 ? 0.35 + (t / 0.22) * 0.65 : Math.max(0.01, (1 - t) / 0.78);
+        p.scale = p.baseScale * env;
+      }
+      this.world.updateFartPuffs(this.fartPuffs);
+    }
+
     // Decay transient bubbles
     for (let i = this.bubbles.length - 1; i >= 0; i--) {
       this.bubbles[i].timer -= dt;
@@ -2577,7 +2754,8 @@ export class StorageHuntersGame {
   _stepDriving(dt, moveX, moveZ, hasDirectInput = false) {
     const tier = CAR_TIERS[this.carTier] || CAR_TIERS[0];
     const owMult = this.car.overweight ? 0.72 : 1.0;
-    const maxSpeed = tier.speed * owMult;
+    const boostMult = this.car.boostTimer > 0 ? 1.28 : 1.0;
+    const maxSpeed = tier.speed * owMult * boostMult;
     const accel = 18.0 * (this.car.overweight ? 0.68 : 1.0);
 
     let throttle = -moveZ; // Keyboard W = -1 -> +1 forward
@@ -2982,6 +3160,8 @@ export class StorageHuntersGame {
       hasPrompt: Boolean(this.activePrompt),
       promptAction: this.activePrompt ? this.activePrompt.action : null,
       touchActionLabel: this._getTouchActionLabel(),
+      fartCount: this.fartCount,
+      activeFartPuffs: this.fartPuffs.length,
       hasWalkTarget: Boolean(this.walkTarget),
       camZoomScale: this.camZoomScale,
       activeModal: this.ui.activeModal,

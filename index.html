@@ -46,6 +46,14 @@
               <path d="M21 14a3 3 0 0 1-3 3H8l-4 3V6a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3z"/>
             </svg>
           </button>
+          <button id="btn-fart" class="rbx-top-btn rbx-fart-top-btn" type="button" title="Fart Emote (G)" aria-label="Fart Emote">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#bef264" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 13h7a2.6 2.6 0 1 0-2.6-2.6"/>
+              <path d="M3 16.5h11.5a2.8 2.8 0 1 1-2.8 2.8"/>
+              <circle cx="17.8" cy="10.2" r="2.6" fill="rgba(163,230,53,0.28)"/>
+              <circle cx="15.2" cy="7.4" r="1.4" fill="rgba(190,242,100,0.4)"/>
+            </svg>
+          </button>
           <div id="hud-clock" class="rbx-clock-pill" title="In-game Time">5:28 PM</div>
           <div id="hud-zone" class="rbx-zone-pill">Pawn Shop</div>
         </div>
@@ -217,7 +225,10 @@
         </div>
         <div id="touch-right-btns">
           <button id="btn-touch-interact" class="rbx-touch-btn rbx-touch-pill hidden" type="button">USE</button>
-          <button id="btn-touch-jump" class="rbx-touch-btn" type="button">JUMP</button>
+          <div class="touch-action-row">
+            <button id="btn-touch-fart" class="rbx-touch-btn rbx-touch-fart" type="button" aria-label="Fart">FART</button>
+            <button id="btn-touch-jump" class="rbx-touch-btn" type="button">JUMP</button>
+          </div>
         </div>
       </div>
     </div>
@@ -295,8 +306,8 @@
           </div>
         </div>
         <div class="menu-controls-hint">
-          <div><strong>Touch / iPad:</strong> Left Stick Move &amp; Steer &bull; Tap NPCs, Loot &amp; Car to Walk/Use &bull; 1-Finger Drag Orbit &bull; 2-Finger Pinch Zoom</div>
-          <div><strong>Keyboard:</strong> WASD / Arrows Move &bull; Space Jump &bull; E Interact &bull; 1-9 Hotbar &bull; B Build &bull; Drag / Q-R Orbit</div>
+          <div><strong>Touch / iPad:</strong> Left Stick Move &amp; Steer &bull; Tap NPCs, Loot &amp; Car to Walk/Use &bull; FART Button &bull; 1-Finger Orbit &bull; 2-Finger Pinch</div>
+          <div><strong>Keyboard:</strong> WASD / Arrows Move &bull; Space Jump &bull; E Interact &bull; G Fart &bull; 1-9 Hotbar &bull; B Build &bull; Drag / Q-R Orbit</div>
         </div>
         <div class="menu-footer">
           <button id="btn-reset-save" class="rbx-btn-danger rbx-btn-sm" type="button">New Game / Reset Save</button>

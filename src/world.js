@@ -1561,6 +1561,55 @@ export function buildWorld(scene) {
   }
 
   // =========================================================================
+  // 8b. POOLED BLOCKY ROBLOX GREEN FART CLOUD PUFFS (1 draw call, hidden idle)
+  // =========================================================================
+  const MAX_FART_PUFFS = 32;
+  const fartPuffGeo = new THREE.BoxGeometry(0.46, 0.46, 0.46);
+  const fartPuffMat = safeStdMat({
+    color: 0xffffff,
+    emissive: 0x3f6212,
+    emissiveIntensity: 0.46,
+    transparent: true,
+    opacity: 0.86,
+    roughness: 0.54,
+    metalness: 0.04,
+    depthWrite: false,
+  });
+  const fartPuffsMesh = new THREE.InstancedMesh(fartPuffGeo, fartPuffMat, MAX_FART_PUFFS);
+  fartPuffsMesh.visible = false;
+  fartPuffsMesh.frustumCulled = false;
+  worldGroup.add(fartPuffsMesh);
+
+  function updateFartPuffs(puffs) {
+    if (!puffs || puffs.length === 0) {
+      fartPuffsMesh.visible = false;
+      return;
+    }
+    const count = Math.min(MAX_FART_PUFFS, puffs.length);
+    for (let i = 0; i < MAX_FART_PUFFS; i++) {
+      if (i < count) {
+        const p = puffs[i];
+        const s = Math.max(0.01, p.scale);
+        _dummy.position.set(p.x, p.y, p.z);
+        _dummy.rotation.set(p.rx, p.ry, p.rz);
+        _dummy.scale.set(s, s, s);
+        _tmpColor.setHex(p.color || 0x84cc16);
+      } else {
+        _dummy.position.set(0, -15, 0);
+        _dummy.rotation.set(0, 0, 0);
+        _dummy.scale.set(0.0001, 0.0001, 0.0001);
+        _tmpColor.setHex(0x84cc16);
+      }
+      _dummy.updateMatrix();
+      fartPuffsMesh.setMatrixAt(i, _dummy.matrix);
+      fartPuffsMesh.setColorAt(i, _tmpColor);
+    }
+    fartPuffsMesh.instanceMatrix.needsUpdate = true;
+    if (fartPuffsMesh.instanceColor) fartPuffsMesh.instanceColor.needsUpdate = true;
+    fartPuffsMesh.visible = true;
+  }
+
+  // =========================================================================
   // 9. SHUTTER ANIMATION & COLLISION RESOLUTION HELPERS
   // =========================================================================
   function updateShutter(idxOrId, openFrac) {
@@ -1662,6 +1711,7 @@ export function buildWorld(scene) {
     updateChevrons,
     updateBuildGhost,
     updateBuildSlotHighlights,
+    updateFartPuffs,
     buildFurnitureMesh,
     updateCar,
     updateCarCargoVisuals,

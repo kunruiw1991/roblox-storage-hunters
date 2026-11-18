@@ -18,6 +18,7 @@ An authentic browser-based 3D remake of Roblox's *Storage Hunters: Open World* b
 | :--- | :--- | :--- |
 | Move / Steer Car | `WASD` or Arrow Keys | Left Translucent Thumbstick (camera-relative directional car steering & smooth auto-camera follow) |
 | Jump / Bid (in Auction) | `Space` | `JUMP` / `BID` Button |
+| Fart Emote (3D Green Cloud, Mega Fart on 5th, Car Turbo Toot Boost & NPC Reactions) | `G` or Top-Left Cloud Icon | `FART` Button (bottom-right) or Top-Left Cloud Icon |
 | Interact / Pick Up / Load / Drive / Exit | `E` (or click floating prompt) | Dynamic Green Action Pill (`TALK BILLY`, `BID A2`, `PICK UP`, `LOAD CAR`, `DRIVE`, `EXIT CAR`, `PLACE`, `STOCK`, `QUICK SELL`), `[TAP]` Prompt, or Tap Any 3D NPC/Loot/Car/Locker/Shelf Directly |
 | Equip Hotbar Slot | `1–9` or Click Slot | Tap Slot `1–9` |
 | Camera Orbit & Zoom | Drag Canvas, Scroll Wheel, or `Q` / `R` | 1-Finger Drag Orbit & 2-Finger Pinch-to-Zoom |
