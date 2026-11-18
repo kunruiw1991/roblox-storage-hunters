@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>Storage Hunters: Open World</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23161922'/%3E%3Cg transform='rotate(16 32 32)'%3E%3Crect x='14' y='14' width='36' height='36' rx='5' fill='%23f8fafc'/%3E%3Crect x='26' y='26' width='12' height='12' rx='2' fill='%23161922'/%3E%3C/g%3E%3C/svg%3E" />
   <link rel="stylesheet" href="./css/style.css" />
@@ -205,15 +208,15 @@
         </div>
       </div>
 
-      <!-- Compact Translucent Roblox Touch Controls (mobile / touch only) -->
+      <!-- Translucent Roblox Touch Controls (iPad / tablet / mobile touch) -->
       <div id="touch-controls" class="hidden">
-        <div id="touch-stick-zone">
+        <div id="touch-stick-zone" aria-label="Move and Steer Stick">
           <div id="touch-stick-base">
             <div id="touch-stick-knob"></div>
           </div>
         </div>
         <div id="touch-right-btns">
-          <button id="btn-touch-interact" class="rbx-touch-btn hidden" type="button">E</button>
+          <button id="btn-touch-interact" class="rbx-touch-btn rbx-touch-pill hidden" type="button">USE</button>
           <button id="btn-touch-jump" class="rbx-touch-btn" type="button">JUMP</button>
         </div>
       </div>
@@ -292,7 +295,8 @@
           </div>
         </div>
         <div class="menu-controls-hint">
-          <strong>Keys:</strong> WASD / Arrows Move &bull; Space Jump &bull; E Interact &bull; 1-9 Hotbar &bull; B Shop Build &bull; Right-Drag / Q-R Orbit Camera
+          <div><strong>Touch / iPad:</strong> Left Stick Move &amp; Steer &bull; Tap NPCs, Loot &amp; Car to Walk/Use &bull; 1-Finger Drag Orbit &bull; 2-Finger Pinch Zoom</div>
+          <div><strong>Keyboard:</strong> WASD / Arrows Move &bull; Space Jump &bull; E Interact &bull; 1-9 Hotbar &bull; B Build &bull; Drag / Q-R Orbit</div>
         </div>
         <div class="menu-footer">
           <button id="btn-reset-save" class="rbx-btn-danger rbx-btn-sm" type="button">New Game / Reset Save</button>

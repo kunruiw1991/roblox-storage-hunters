@@ -214,20 +214,23 @@ export class StorageHuntersGame {
     // World-space transient bid/speech bubbles
     this.bubbles = [];
 
-    // Raycaster & floor plane for Pawn Shop build placement
+    // Raycaster & floor plane for Pawn Shop build placement + tap projection
     this.raycaster = new THREE.Raycaster();
     this.floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.16);
     this.rayHit = new THREE.Vector3();
+    this._tapProjVec = new THREE.Vector3();
 
     // Input state
     this.input = { x: 0, z: 0 };
     this.keys = new Set();
     this.touchInput = { x: 0, z: 0 };
+    this.walkTarget = null;
     this.jumpQueued = false;
     this.manualOrbitDragging = false;
     this.camYaw = Math.PI + 0.48; // Angled slightly NW toward Wagon, Boulevard & Auction Lot
     this.camPitch = 0.30;
     this.camDist = 9.0;
+    this.camZoomScale = 1.0;
     this.camLookTarget = new THREE.Vector3(SPAWN_POINT.x, 1.8, SPAWN_POINT.z);
     this.camCurrentPos = new THREE.Vector3(SPAWN_POINT.x, 5.0, SPAWN_POINT.z + 9.0);
 
@@ -296,8 +299,10 @@ export class StorageHuntersGame {
     this.hotbar = new Array(9).fill(null);
     this.selectedSlot = 0;
 
-    // Navigation
+    // Navigation & tap-to-walk
     this.navTarget = null; // { x, z, label, key }
+    this.walkTarget = null;
+    this.camZoomScale = 1.0;
 
     // Shop build state
     this.buildTab = null; // 'BUILD' | 'SHELVES' | 'DECOR' | null
@@ -771,11 +776,24 @@ export class StorageHuntersGame {
   setInput(x, z) {
     this.input.x = clamp(Number(x) || 0, -1, 1);
     this.input.z = clamp(Number(z) || 0, -1, 1);
+    if (Math.hypot(this.input.x, this.input.z) > 0.05) {
+      this.walkTarget = null;
+    }
+  }
+
+  clearWalkTarget() {
+    this.walkTarget = null;
   }
 
   setCameraOrbit(yaw, pitch) {
     if (typeof yaw === 'number' && Number.isFinite(yaw)) this.camYaw = wrapAngle(yaw);
     if (typeof pitch === 'number' && Number.isFinite(pitch)) this.camPitch = clamp(pitch, 0.16, 0.86);
+  }
+
+  setCameraZoom(scale) {
+    if (typeof scale === 'number' && Number.isFinite(scale)) {
+      this.camZoomScale = clamp(scale, 0.72, 1.55);
+    }
   }
 
   _addBubble(x, y, z, text, dur = 2.0, nice = false) {
@@ -1964,8 +1982,8 @@ export class StorageHuntersGame {
     }
   }
 
-  // ---------------- POINTER / BUILD RAYCASTING ----------------
-  updateBuildHoverFromPointer(clientX, clientY) {
+  // ---------------- POINTER / BUILD RAYCASTING & TAP-TO-INTERACT ----------------
+  updateBuildHoverFromPointer(clientX, clientY, maxRadius = 2.6) {
     if (!this.player.inPawnShop || !this.buildTab) {
       this.hoveredBuildSlot = null;
       return;
@@ -1977,7 +1995,7 @@ export class StorageHuntersGame {
     if (!this.raycaster.ray.intersectPlane(this.floorPlane, this.rayHit)) return;
 
     let bestIdx = null;
-    let bestD = 2.6;
+    let bestD = maxRadius;
     for (let i = 0; i < this.shelfSlots.length; i++) {
       const s = this.shelfSlots[i];
       const d = Math.hypot(this.rayHit.x - s.x, this.rayHit.z - s.z);
@@ -1989,14 +2007,202 @@ export class StorageHuntersGame {
     this.hoveredBuildSlot = bestIdx;
   }
 
+  _executeTappedAction(target) {
+    if (!target) return false;
+    switch (target.type) {
+      case 'talk_npc':
+        return this.talkNpc(target.npcId);
+      case 'pickup_item':
+        return this._pickupLockerItem(target.bayIdx, target.itemUid);
+      case 'join_auction':
+        return this.startAuction(target.bayIdx);
+      case 'stock_shelf':
+        return this.stockShelf(target.slotIdx);
+      case 'car': {
+        const carriedCount = this.hotbar.reduce((n, it, i) => (i > 0 && it ? n + 1 : n), 0);
+        const tier = CAR_TIERS[this.carTier];
+        if (carriedCount > 0 && this.car.cargo.length < tier.slots) {
+          return this.loadCarAll() > 0;
+        }
+        return this.toggleDrive();
+      }
+      default:
+        return false;
+    }
+  }
+
   handleCanvasClick(clientX, clientY) {
     this.audio.unlock();
     if (this.ui.activeModal || this.auction.active) return;
+
+    // 1. Pawn Shop Build Mode: generous 3.3u tap-to-place onto open floor tiles
     if (this.player.inPawnShop && this.buildTab) {
-      this.updateBuildHoverFromPointer(clientX, clientY);
+      this.updateBuildHoverFromPointer(clientX, clientY, 3.3);
       if (this.hoveredBuildSlot !== null) {
+        if (this.shopFurniture[this.hoveredBuildSlot]) {
+          this.ui.showToast('Spot occupied — tap a glowing blue floor tile!', 1.8);
+          return;
+        }
         this.placeFurnitureAtSlot(this.hoveredBuildSlot);
       }
+      return;
+    }
+
+    if (this.player.driving) return;
+
+    // 2. Tap-to-Interact (or gentle Tap-to-Walk) on 3D NPCs, locker items, car, bays & shelves
+    const rect = this.canvas.getBoundingClientRect();
+    const isTouch = this.ui.isTouchEnvironment();
+    const hitRadiusPx = isTouch ? 64 : 44;
+    const candidates = [];
+
+    // Open locker items
+    for (let b = 0; b < this.lockers.length; b++) {
+      const lk = this.lockers[b];
+      if (!lk.wonOpen) continue;
+      for (const item of lk.items) {
+        candidates.push({
+          type: 'pickup_item',
+          bayIdx: b,
+          itemUid: item.uid,
+          ax: item.x,
+          ay: item.y + 0.65,
+          az: item.z,
+          tx: item.x,
+          tz: item.z,
+          interactDist: 2.5,
+          stopDist: 1.75,
+          maxTapDist: 26,
+        });
+      }
+    }
+
+    // Billy & Sal
+    candidates.push({
+      type: 'talk_npc',
+      npcId: 'billy',
+      ax: NPCS.billy.x,
+      ay: 1.4,
+      az: NPCS.billy.z,
+      tx: NPCS.billy.x,
+      tz: NPCS.billy.z,
+      interactDist: 3.6,
+      stopDist: 2.6,
+      maxTapDist: 32,
+    });
+    candidates.push({
+      type: 'talk_npc',
+      npcId: 'sal',
+      ax: NPCS.sal.x,
+      ay: 1.4,
+      az: NPCS.sal.z,
+      tx: NPCS.sal.x,
+      tz: NPCS.sal.z,
+      interactDist: 3.6,
+      stopDist: 2.6,
+      maxTapDist: 32,
+    });
+
+    // Rick Harrison (inside Pawn Shop or near doorway)
+    if (this.player.inPawnShop || this.player.z >= 14.0) {
+      candidates.push({
+        type: 'talk_npc',
+        npcId: 'rick',
+        ax: NPCS.rick.x,
+        ay: 1.4,
+        az: NPCS.rick.z,
+        tx: NPCS.rick.x - 1.5,
+        tz: NPCS.rick.z,
+        interactDist: 3.6,
+        stopDist: 2.4,
+        maxTapDist: 22,
+      });
+    }
+
+    // Empty Pawn Shop shelves (when carrying or car has cargo)
+    if (this.player.inPawnShop && (this.hotbar.some(Boolean) || this.car.cargo.length > 0)) {
+      for (const [slotIdxStr, entry] of Object.entries(this.shopFurniture)) {
+        const cat = CATALOG_BY_ID[entry.catalogId];
+        if (!cat || cat.tab === 'DECOR' || entry.stockedItem) continue;
+        const idx = Number(slotIdxStr);
+        const slot = this.shelfSlots[idx];
+        candidates.push({
+          type: 'stock_shelf',
+          slotIdx: idx,
+          ax: slot.x,
+          ay: slot.y + cat.height * 0.6,
+          az: slot.z,
+          tx: slot.x,
+          tz: slot.z,
+          interactDist: 2.8,
+          stopDist: 2.0,
+          maxTapDist: 20,
+        });
+      }
+    }
+
+    // Player Vehicle
+    if (!this.player.inPawnShop) {
+      candidates.push({
+        type: 'car',
+        ax: this.car.x,
+        ay: 1.25,
+        az: this.car.z,
+        tx: this.car.x,
+        tz: this.car.z,
+        interactDist: 4.3,
+        stopDist: 3.2,
+        maxTapDist: 34,
+      });
+    }
+
+    // Closed Locker Bays
+    for (let i = 0; i < LOCKER_BAYS.length; i++) {
+      if (this.lockers[i].wonOpen) continue;
+      const bay = LOCKER_BAYS[i];
+      candidates.push({
+        type: 'join_auction',
+        bayIdx: i,
+        ax: bay.centerX,
+        ay: 1.8,
+        az: -22.2,
+        tx: bay.centerX,
+        tz: bay.crowdCenter.z - 1.5,
+        interactDist: 4.8,
+        stopDist: 3.6,
+        maxTapDist: 32,
+      });
+    }
+
+    let best = null;
+    let bestPxDist = hitRadiusPx;
+    for (const c of candidates) {
+      const worldDist = Math.hypot(this.player.x - c.tx, this.player.z - c.tz);
+      if (worldDist > c.maxTapDist) continue;
+      this._tapProjVec.set(c.ax, c.ay, c.az).project(this.camera);
+      if (this._tapProjVec.z > 1 || this._tapProjVec.z < -1) continue;
+      const sx = rect.left + (this._tapProjVec.x * 0.5 + 0.5) * rect.width;
+      const sy = rect.top + (-this._tapProjVec.y * 0.5 + 0.5) * rect.height;
+      const pxDist = Math.hypot(clientX - sx, clientY - sy);
+      if (pxDist < bestPxDist) {
+        bestPxDist = pxDist;
+        best = { ...c, worldDist };
+      }
+    }
+
+    if (!best) return;
+    if (best.worldDist <= best.interactDist) {
+      this.walkTarget = null;
+      this._executeTappedAction(best);
+    } else {
+      this.walkTarget = {
+        x: best.tx,
+        z: best.tz,
+        stopDist: best.stopDist,
+        target: best,
+        stuckTime: 0,
+        lastDist: best.worldDist,
+      };
     }
   }
 
@@ -2031,18 +2237,25 @@ export class StorageHuntersGame {
     }
 
     // Combine keyboard + touch + programmatic input
-    let moveX = this.input.x + this.touchInput.x;
-    let moveZ = this.input.z + this.touchInput.z;
+    let kbX = 0;
+    let kbZ = 0;
     if (!this.ui.activeModal && !this.auction.active) {
-      if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) moveX -= 1;
-      if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) moveX += 1;
-      if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) moveZ -= 1;
-      if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) moveZ += 1;
+      if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) kbX -= 1;
+      if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) kbX += 1;
+      if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) kbZ -= 1;
+      if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) kbZ += 1;
     }
+    const hasDirectInput =
+      Math.hypot(this.input.x, this.input.z) > 0.01 || Math.hypot(kbX, kbZ) > 0.01;
+    let moveX = this.input.x + this.touchInput.x + kbX;
+    let moveZ = this.input.z + this.touchInput.z + kbZ;
     const inputLen = Math.hypot(moveX, moveZ);
     if (inputLen > 1) {
       moveX /= inputLen;
       moveZ /= inputLen;
+    }
+    if (inputLen > 0.05 || this.ui.activeModal || this.auction.active || this.player.driving) {
+      this.walkTarget = null;
     }
 
     // Shutter animations, per-bay item culling, & auto-restock for empty won lockers
@@ -2091,7 +2304,7 @@ export class StorageHuntersGame {
     // Step Player Movement OR Car Driving
     if (!this.auction.active && !this.ui.activeModal) {
       if (this.player.driving) {
-        this._stepDriving(dt, moveX, moveZ);
+        this._stepDriving(dt, moveX, moveZ, hasDirectInput);
       } else {
         this._stepWalking(dt, moveX, moveZ, lockerOpenFlags);
       }
@@ -2144,8 +2357,15 @@ export class StorageHuntersGame {
       const valid =
         Boolean(slot && cat && !this.shopFurniture[this.hoveredBuildSlot] && this.cash >= cat.cost);
       this.world.updateBuildGhost(slot, valid, Boolean(slot));
+      this.world.updateBuildSlotHighlights(
+        this.shelfSlots,
+        this.shopFurniture,
+        true,
+        this.hoveredBuildSlot
+      );
     } else {
       this.world.updateBuildGhost(null, false, false);
+      this.world.updateBuildSlotHighlights(this.shelfSlots, this.shopFurniture, false, -1);
     }
 
     // Animate Player & NPCs
@@ -2270,6 +2490,7 @@ export class StorageHuntersGame {
     const mag = Math.hypot(wx, wz);
 
     if (mag > 0.02) {
+      this.walkTarget = null;
       const nx = this.player.x + wx * walkSpeed * dt;
       const nz = this.player.z + wz * walkSpeed * dt;
       const res = this.world.resolveWalkCollision(nx, nz, 0.45, lockerOpenFlags);
@@ -2279,6 +2500,52 @@ export class StorageHuntersGame {
       this.player.speed = moved / Math.max(0.001, dt);
       const targetYaw = Math.atan2(wx, wz);
       this.player.yaw = lerpAngle(this.player.yaw, targetYaw, dt * 14);
+
+      // Gentle Roblox-style camera follow on touch when steering left/right so 1-thumb walking feels natural
+      const touchMag = Math.hypot(this.touchInput.x, this.touchInput.z);
+      if (
+        touchMag > 0.22 &&
+        !this.manualOrbitDragging &&
+        Math.abs(this.touchInput.x) > 0.25 &&
+        this.touchInput.z < 0.35
+      ) {
+        this.camYaw = lerpAngle(this.camYaw, this.player.yaw, dt * 0.95);
+      }
+    } else if (this.walkTarget) {
+      const wt = this.walkTarget;
+      const dx = wt.x - this.player.x;
+      const dz = wt.z - this.player.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist <= wt.stopDist) {
+        const target = wt.target;
+        this.walkTarget = null;
+        this.player.speed = 0;
+        this._executeTappedAction(target);
+      } else {
+        const stepLen = Math.min(dist, walkSpeed * dt);
+        const dirX = dx / Math.max(0.001, dist);
+        const dirZ = dz / Math.max(0.001, dist);
+        const nx = this.player.x + dirX * stepLen;
+        const nz = this.player.z + dirZ * stepLen;
+        const res = this.world.resolveWalkCollision(nx, nz, 0.45, lockerOpenFlags);
+        const moved = Math.hypot(res.x - this.player.x, res.z - this.player.z);
+        this.player.x = res.x;
+        this.player.z = res.z;
+        this.player.speed = moved / Math.max(0.001, dt);
+        this.player.yaw = lerpAngle(this.player.yaw, Math.atan2(dirX, dirZ), dt * 14);
+
+        const newDist = Math.hypot(wt.x - this.player.x, wt.z - this.player.z);
+        if (wt.lastDist - newDist < 0.015) {
+          wt.stuckTime += dt;
+          if (wt.stuckTime > 0.65) {
+            this.walkTarget = null;
+            this.player.speed = 0;
+          }
+        } else {
+          wt.stuckTime = 0;
+        }
+        wt.lastDist = newDist;
+      }
     } else {
       this.player.speed = 0;
     }
@@ -2307,14 +2574,46 @@ export class StorageHuntersGame {
     this.playerRig.group.rotation.y = this.player.yaw;
   }
 
-  _stepDriving(dt, moveX, moveZ) {
+  _stepDriving(dt, moveX, moveZ, hasDirectInput = false) {
     const tier = CAR_TIERS[this.carTier] || CAR_TIERS[0];
     const owMult = this.car.overweight ? 0.72 : 1.0;
     const maxSpeed = tier.speed * owMult;
     const accel = 18.0 * (this.car.overweight ? 0.68 : 1.0);
 
-    const throttle = -moveZ; // W = -1 -> +1 forward
-    const steerInput = -moveX; // A = -1 -> +1 left yaw
+    let throttle = -moveZ; // Keyboard W = -1 -> +1 forward
+    let steerInput = -moveX; // Keyboard A = -1 -> +1 left yaw
+    const touchMag = Math.hypot(this.touchInput.x, this.touchInput.z);
+    const useTouchDirectional = !hasDirectInput && touchMag > 0.10;
+
+    if (useTouchDirectional) {
+      // Camera-relative directional thumbstick driving: push stick anywhere you want the car to go!
+      const fwdX = Math.sin(this.camYaw);
+      const fwdZ = Math.cos(this.camYaw);
+      const rightX = -Math.cos(this.camYaw);
+      const rightZ = Math.sin(this.camYaw);
+      const wx = rightX * this.touchInput.x - fwdX * this.touchInput.z;
+      const wz = rightZ * this.touchInput.x - fwdZ * this.touchInput.z;
+      const desiredYaw = Math.atan2(wx, wz);
+      const angleDiff = wrapAngle(desiredYaw - this.car.yaw);
+
+      if (Math.abs(angleDiff) > Math.PI * 0.78) {
+        if (this.car.speed > 2.2) {
+          // Smooth brake before shifting into reverse
+          throttle = -1.0;
+          steerInput = 0;
+        } else {
+          // Smooth reverse steering
+          throttle = -clamp(touchMag, 0.35, 1.0) * 0.72;
+          const revHeading = wrapAngle(desiredYaw + Math.PI);
+          const revDiff = wrapAngle(revHeading - this.car.yaw);
+          steerInput = clamp(-revDiff * 1.45, -1, 1);
+        }
+      } else {
+        steerInput = clamp(angleDiff * 1.75, -1, 1);
+        const turnSlow = Math.abs(angleDiff) > 1.25 ? 0.68 : 1.0;
+        throttle = clamp(touchMag, 0.38, 1.0) * turnSlow;
+      }
+    }
 
     if (Math.abs(throttle) > 0.05) {
       this.car.speed += throttle * accel * dt;
@@ -2325,10 +2624,13 @@ export class StorageHuntersGame {
     this.car.speed = clamp(this.car.speed, -maxSpeed * 0.55, maxSpeed);
     this.car.steer = lerpAngle(this.car.steer, steerInput * 0.52, dt * 10);
 
-    if (Math.abs(this.car.speed) > 0.25) {
-      const dir = Math.sign(this.car.speed);
-      const turnRate = 2.15 * clamp(Math.abs(this.car.speed) / 7.0, 0.35, 1.0);
-      this.car.yaw = wrapAngle(this.car.yaw + steerInput * turnRate * dir * dt);
+    if (Math.abs(this.car.speed) > 0.25 || (useTouchDirectional && Math.abs(steerInput) > 0.08)) {
+      const dir = Math.abs(this.car.speed) > 0.05 ? Math.sign(this.car.speed) : throttle >= 0 ? 1 : -1;
+      const speedFactor = useTouchDirectional
+        ? clamp(Math.abs(this.car.speed) / 5.5, 0.55, 1.12)
+        : clamp(Math.abs(this.car.speed) / 7.0, 0.35, 1.0);
+      const baseTurn = useTouchDirectional ? 2.55 : 2.15;
+      this.car.yaw = wrapAngle(this.car.yaw + steerInput * baseTurn * speedFactor * dir * dt);
     }
 
     const nx = this.car.x + Math.sin(this.car.yaw) * this.car.speed * dt;
@@ -2420,6 +2722,7 @@ export class StorageHuntersGame {
     let targetY = this.player.y + 1.65;
     let targetZ = this.player.z;
     let desiredDist = this.player.driving ? 10.6 : this.player.inPawnShop ? 7.4 : 8.6;
+    desiredDist = clamp(desiredDist * this.camZoomScale, 5.4, 14.8);
     let desiredPitch = this.camPitch;
     let desiredYaw = this.camYaw;
 
@@ -2538,7 +2841,39 @@ export class StorageHuntersGame {
       carPos: { x: this.car.x, z: this.car.z },
       auction: this.auction.active ? { ...this.auction } : null,
       hasPrompt: Boolean(this.activePrompt),
+      touchActionLabel: this._getTouchActionLabel(),
     };
+  }
+
+  _getTouchActionLabel() {
+    if (this.player.driving) return 'EXIT CAR';
+    const p = this.activePrompt;
+    if (!p) return 'USE';
+    switch (p.type) {
+      case 'talk_npc':
+        if (p.npcId === 'rick') return 'QUICK SELL';
+        if (p.npcId === 'billy') return 'TALK BILLY';
+        if (p.npcId === 'sal') return 'TALK SAL';
+        return 'TALK';
+      case 'join_auction': {
+        const bay = LOCKER_BAYS[p.bayIdx];
+        return bay ? `BID ${bay.code}` : 'AUCTION';
+      }
+      case 'pickup_item':
+        return 'PICK UP';
+      case 'load_car':
+        return 'LOAD CAR';
+      case 'drive_car':
+        return 'DRIVE';
+      case 'summon_wagon':
+        return 'CALL CAR';
+      case 'place_build':
+        return 'PLACE';
+      case 'stock_shelf':
+        return 'STOCK';
+      default:
+        return 'USE';
+    }
   }
 
   render() {
@@ -2646,6 +2981,9 @@ export class StorageHuntersGame {
       discoveredRarities: { ...this.discoveredRarities },
       hasPrompt: Boolean(this.activePrompt),
       promptAction: this.activePrompt ? this.activePrompt.action : null,
+      touchActionLabel: this._getTouchActionLabel(),
+      hasWalkTarget: Boolean(this.walkTarget),
+      camZoomScale: this.camZoomScale,
       activeModal: this.ui.activeModal,
       cameraRotZ: this.camera.rotation.z,
       simTime: this.simTime,

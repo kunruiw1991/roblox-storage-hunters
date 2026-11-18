@@ -23,12 +23,14 @@
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none;
   background: #101522;
   color: var(--rbx-text);
   font-family: 'Gotham', 'Montserrat', 'Segoe UI', system-ui, -apple-system, sans-serif;
@@ -40,6 +42,7 @@ html, body {
 button {
   font-family: inherit;
   color: inherit;
+  touch-action: manipulation;
 }
 
 .hidden {
@@ -47,10 +50,13 @@ button {
 }
 
 #game-shell {
-  position: relative;
+  position: fixed;
+  inset: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
+  touch-action: none;
 }
 
 #game-canvas {
@@ -94,8 +100,8 @@ button {
 /* ---------------- TOP-LEFT ROBLOX TOPBAR & QUEST ---------------- */
 #top-left-hud {
   position: absolute;
-  top: 10px;
-  left: 12px;
+  top: max(10px, env(safe-area-inset-top, 0px));
+  left: max(12px, env(safe-area-inset-left, 0px));
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -260,8 +266,8 @@ button {
 /* ---------------- TOP-RIGHT LEADERBOARD & MINIMAP ---------------- */
 #top-right-hud {
   position: absolute;
-  top: 10px;
-  right: 12px;
+  top: max(10px, env(safe-area-inset-top, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -348,6 +354,7 @@ button {
   border-radius: 5px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: #1f2b22;
+  cursor: pointer;
 }
 
 .rbx-nav-btn {
@@ -1119,7 +1126,26 @@ button {
   100% { opacity: 0; transform: translate(-50%, -175%) scale(1.0); }
 }
 
-/* ---------------- TOUCH CONTROLS (TRANSLUCENT ROBLOX) ---------------- */
+/* ---------------- TOUCH CONTROLS (TRANSLUCENT ROBLOX — IPAD & MOBILE) ---------------- */
+body.touch-device #bottom-left-hud {
+  display: none !important;
+}
+
+body.touch-device #mobile-stats-strip {
+  display: inline-flex;
+  font-size: 12.5px;
+  gap: 10px;
+  padding: 5px 10px;
+}
+
+body.touch-device .rbx-keycap {
+  width: auto;
+  min-width: 34px;
+  padding: 0 7px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
 #touch-controls {
   position: absolute;
   inset: 0;
@@ -1128,10 +1154,11 @@ button {
 
 #touch-stick-zone {
   position: absolute;
-  left: 14px;
-  bottom: 58px;
-  width: 84px;
-  height: 84px;
+  left: max(22px, calc(env(safe-area-inset-left, 0px) + 18px));
+  bottom: max(22px, calc(env(safe-area-inset-bottom, 0px) + 18px));
+  width: 136px;
+  height: 136px;
+  padding: 6px;
   pointer-events: auto;
   touch-action: none;
 }
@@ -1141,54 +1168,141 @@ button {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: rgba(15, 20, 30, 0.45);
-  border: 2px solid rgba(255, 255, 255, 0.28);
+  background: radial-gradient(circle at center, rgba(255, 255, 255, 0.08) 0%, rgba(15, 20, 30, 0.44) 62%, rgba(15, 20, 30, 0.54) 100%);
+  border: 2px solid rgba(255, 255, 255, 0.30);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.36);
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+#touch-stick-base.active {
+  border-color: rgba(56, 189, 248, 0.78);
+  background: radial-gradient(circle at center, rgba(56, 189, 248, 0.14) 0%, rgba(15, 20, 30, 0.50) 68%, rgba(15, 20, 30, 0.62) 100%);
 }
 
 #touch-stick-knob {
-  width: 34px;
-  height: 34px;
+  width: 50px;
+  height: 50px;
   border-radius: 50%;
-  background: rgba(248, 250, 252, 0.72);
-  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  background: rgba(248, 250, 252, 0.76);
+  border: 2px solid rgba(255, 255, 255, 0.94);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.42);
   transform: translate(0, 0);
+  pointer-events: none;
 }
 
 #touch-right-btns {
   position: absolute;
-  right: 14px;
-  bottom: 58px;
+  right: max(22px, calc(env(safe-area-inset-right, 0px) + 18px));
+  bottom: max(22px, calc(env(safe-area-inset-bottom, 0px) + 18px));
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
+  gap: 12px;
   pointer-events: auto;
 }
 
 .rbx-touch-btn {
-  width: 56px;
-  height: 56px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.34);
+  border: 2px solid rgba(255, 255, 255, 0.36);
   background: rgba(15, 20, 30, 0.56);
   color: #ffffff;
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 900;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.38);
+  touch-action: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.08s, background 0.1s;
 }
 
 .rbx-touch-btn:active {
-  background: rgba(56, 189, 248, 0.52);
+  background: rgba(56, 189, 248, 0.56);
+  transform: scale(0.94);
 }
 
-#btn-touch-interact {
-  border-color: rgba(74, 222, 128, 0.75);
-  background: rgba(22, 163, 74, 0.65);
-  font-size: 16px;
+#btn-touch-interact.rbx-touch-pill {
+  width: auto;
+  min-width: 96px;
+  max-width: 152px;
+  height: 54px;
+  padding: 0 16px;
+  border-radius: 27px;
+  border-color: rgba(134, 239, 172, 0.85);
+  background: rgba(21, 128, 61, 0.82);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+#btn-touch-interact.rbx-touch-pill:active {
+  background: rgba(34, 197, 94, 0.92);
+}
+
+/* Comfortable iPad / Tablet touch targets (desktop non-touch & compact phones unaffected) */
+@media (min-width: 601px) and (min-height: 501px) {
+  body.touch-device .rbx-top-btn {
+    width: 44px;
+    height: 44px;
+  }
+  body.touch-device .rbx-clock-pill,
+  body.touch-device .rbx-zone-pill {
+    height: 36px;
+    font-size: 12.5px;
+  }
+  body.touch-device .rbx-nav-btn {
+    padding: 7px 8px;
+    font-size: 11px;
+  }
+  body.touch-device .rbx-chip-btn {
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+  body.touch-device .shop-tab-btn,
+  body.touch-device .shop-tab-cancel {
+    padding: 8px 14px;
+    font-size: 12px;
+  }
+  body.touch-device .catalog-card {
+    padding: 8px 12px;
+  }
+  body.touch-device .auc-bid-btn {
+    padding: 13px 16px;
+    font-size: 15.5px;
+  }
+  body.touch-device .auc-pass-btn {
+    width: 92px;
+    padding: 13px 10px;
+    font-size: 13px;
+  }
+  body.touch-device .offer-btn {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  body.touch-device .rbx-prompt {
+    padding: 9px 14px 9px 10px;
+  }
+  body.touch-device .rbx-modal-close {
+    width: 36px;
+    height: 36px;
+    font-size: 20px;
+  }
+  body.touch-device .rbx-toggle-btn {
+    min-width: 62px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  body.touch-device #btn-drive-exit {
+    padding: 8px 14px;
+    font-size: 13px;
+  }
 }
 
 /* ---------------- MODALS ---------------- */
@@ -1413,6 +1527,9 @@ button {
   background: rgba(255, 255, 255, 0.04);
   font-size: 11.5px;
   color: #cbd5e1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .menu-footer {
@@ -1421,6 +1538,44 @@ button {
   align-items: center;
   padding: 10px 14px;
   border-top: 1px solid var(--rbx-border);
+}
+
+/* ---------------- RESPONSIVE: TABLET / IPAD PORTRAIT (768x1024) ---------------- */
+@media (max-width: 900px) and (min-width: 601px) {
+  #top-right-hud {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .rbx-chip-btn {
+    display: inline-flex;
+  }
+  #leaderboard-panel {
+    display: none;
+    width: 170px;
+  }
+  #leaderboard-panel.open {
+    display: block;
+  }
+  #center-alerts {
+    top: 178px;
+    max-width: 82vw;
+  }
+  #touch-stick-zone {
+    left: max(18px, env(safe-area-inset-left, 0px));
+    bottom: max(196px, calc(env(safe-area-inset-bottom, 0px) + 190px));
+    width: 126px;
+    height: 126px;
+  }
+  #touch-stick-knob {
+    width: 46px;
+    height: 46px;
+  }
+  #touch-right-btns {
+    right: max(18px, env(safe-area-inset-right, 0px));
+    bottom: max(196px, calc(env(safe-area-inset-bottom, 0px) + 190px));
+    gap: 12px;
+  }
 }
 
 /* ---------------- RESPONSIVE: SHORT LANDSCAPE (844x390) ---------------- */
@@ -1433,7 +1588,8 @@ button {
   .rbx-quest-text { font-size: 11.5px; }
   #chat-panel { width: 206px; max-height: 118px; }
   #bottom-left-hud { display: none !important; }
-  #mobile-stats-strip { display: inline-flex; }
+  #mobile-stats-strip,
+  body.touch-device #mobile-stats-strip { display: inline-flex; font-size: 11px; gap: 7px; padding: 4px 8px; }
 
   #top-right-hud { top: 6px; right: 8px; gap: 5px; }
   .rbx-chip-btn { display: inline-flex; }
@@ -1467,16 +1623,18 @@ button {
   .disc-stats { font-size: 10.5px; }
   #toast-banner { padding: 4px 10px; font-size: 11px; }
 
-  #touch-stick-zone { width: 74px; height: 74px; left: 12px; bottom: 50px; }
+  #touch-stick-zone { width: 82px; height: 82px; left: 12px; bottom: 50px; padding: 4px; }
+  #touch-stick-knob { width: 32px; height: 32px; }
   #touch-right-btns { right: 12px; bottom: 50px; gap: 6px; }
-  .rbx-touch-btn { width: 48px; height: 48px; font-size: 10px; }
+  .rbx-touch-btn { width: 50px; height: 50px; font-size: 10px; }
+  #btn-touch-interact.rbx-touch-pill { min-width: 78px; max-width: 118px; height: 42px; padding: 0 11px; font-size: 10.5px; }
 
   /* Keep modals 0-scrollbar inside 390px height */
   .rbx-modal-head { padding: 7px 12px; }
   .rbx-modal-head h2 { font-size: 13.5px; }
   .menu-grid { gap: 8px; padding: 8px 12px; }
   .menu-sec { padding: 7px; gap: 5px; }
-  .menu-controls-hint { margin: 0 12px 6px; padding: 5px 8px; font-size: 10.5px; }
+  .menu-controls-hint { margin: 0 12px 6px; padding: 5px 8px; font-size: 10px; gap: 2px; }
   .menu-footer { padding: 7px 12px; }
   .rick-subbar { padding: 5px 12px; font-size: 11px; }
   .rick-grid { padding: 7px 12px; gap: 6px; max-height: 175px; }
@@ -1494,7 +1652,8 @@ button {
   .rbx-quest-text { font-size: 11.5px; }
   #chat-panel { width: 210px; max-width: 100%; max-height: 140px; }
   #bottom-left-hud { display: none !important; }
-  #mobile-stats-strip { display: inline-flex; font-size: 10.5px; gap: 6px; padding: 4px 7px; }
+  #mobile-stats-strip,
+  body.touch-device #mobile-stats-strip { display: inline-flex; font-size: 10.5px; gap: 6px; padding: 4px 7px; }
 
   #top-right-hud {
     top: 8px;
@@ -1535,9 +1694,11 @@ button {
   .auction-leader { width: 88px; padding: 6px; }
   .auc-leader-img { width: 42px; height: 42px; }
 
-  #touch-stick-zone { left: 12px; bottom: 164px; width: 78px; height: 78px; }
-  #touch-right-btns { right: 12px; bottom: 164px; gap: 8px; }
-  .rbx-touch-btn { width: 52px; height: 52px; }
+  #touch-stick-zone { left: 12px; bottom: 168px; width: 84px; height: 84px; padding: 4px; }
+  #touch-stick-knob { width: 34px; height: 34px; }
+  #touch-right-btns { right: 12px; bottom: 168px; gap: 8px; }
+  .rbx-touch-btn { width: 52px; height: 52px; font-size: 10.5px; }
+  #btn-touch-interact.rbx-touch-pill { min-width: 82px; max-width: 124px; height: 44px; padding: 0 12px; font-size: 11px; }
 
   .menu-grid { grid-template-columns: 1fr; }
   .rick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -1459,7 +1459,7 @@ export function buildWorld(scene) {
   }
 
   // =========================================================================
-  // 8. PAWN SHOP BUILD MODE SNAP PREVIEW GHOST (1 draw call, hidden when idle)
+  // 8. PAWN SHOP BUILD MODE SNAP PREVIEW GHOST & OPEN FLOOR SLOT PADS
   // =========================================================================
   const ghostGeo = new THREE.BoxGeometry(1.72, 1.0, 1.04);
   const ghostMat = safeStdMat({
@@ -1475,6 +1475,73 @@ export function buildWorld(scene) {
   const buildGhostMesh = new THREE.Mesh(ghostGeo, ghostMat);
   buildGhostMesh.visible = false;
   worldGroup.add(buildGhostMesh);
+
+  // Subtle dashed floor outline pads on every open shelf slot during Build Mode (1 draw call, hidden when idle)
+  const slotPadCanvas = document.createElement('canvas');
+  slotPadCanvas.width = 128;
+  slotPadCanvas.height = 96;
+  const spCtx = slotPadCanvas.getContext('2d');
+  spCtx.fillStyle = 'rgba(56, 189, 248, 0.22)';
+  spCtx.fillRect(6, 6, 116, 84);
+  spCtx.strokeStyle = '#7dd3fc';
+  spCtx.lineWidth = 6;
+  spCtx.setLineDash([14, 8]);
+  spCtx.strokeRect(7, 7, 114, 82);
+  spCtx.setLineDash([]);
+  spCtx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+  spCtx.lineWidth = 3;
+  spCtx.beginPath();
+  spCtx.moveTo(64, 34);
+  spCtx.lineTo(64, 62);
+  spCtx.moveTo(50, 48);
+  spCtx.lineTo(78, 48);
+  spCtx.stroke();
+  const slotPadTex = new THREE.CanvasTexture(slotPadCanvas);
+  slotPadTex.colorSpace = THREE.SRGBColorSpace;
+
+  const MAX_BUILD_SLOTS = 20;
+  const slotPadGeo = new THREE.PlaneGeometry(1.86, 1.18);
+  slotPadGeo.rotateX(-Math.PI / 2);
+  const slotPadMat = safeStdMat({
+    map: slotPadTex,
+    emissive: 0x38bdf8,
+    emissiveIntensity: 0.42,
+    transparent: true,
+    opacity: 0.82,
+    roughness: 0.45,
+    metalness: 0.04,
+    depthWrite: false,
+  });
+  const buildSlotPadsMesh = new THREE.InstancedMesh(slotPadGeo, slotPadMat, MAX_BUILD_SLOTS);
+  buildSlotPadsMesh.visible = false;
+  buildSlotPadsMesh.frustumCulled = false;
+  worldGroup.add(buildSlotPadsMesh);
+
+  function updateBuildSlotHighlights(slots, occupiedMap, visible = false, selectedIdx = -1) {
+    if (!visible || !slots || !slots.length) {
+      buildSlotPadsMesh.visible = false;
+      return;
+    }
+    let openCount = 0;
+    for (let i = 0; i < MAX_BUILD_SLOTS; i++) {
+      const s = slots[i];
+      if (s && (!occupiedMap || !occupiedMap[i]) && i !== selectedIdx) {
+        const baseY = typeof s.y === 'number' ? s.y : 0.16;
+        _dummy.position.set(s.x, baseY + 0.025, s.z);
+        _dummy.rotation.set(0, 0, 0);
+        _dummy.scale.set(1, 1, 1);
+        openCount++;
+      } else {
+        _dummy.position.set(0, -10, 0);
+        _dummy.rotation.set(0, 0, 0);
+        _dummy.scale.set(0.0001, 0.0001, 0.0001);
+      }
+      _dummy.updateMatrix();
+      buildSlotPadsMesh.setMatrixAt(i, _dummy.matrix);
+    }
+    buildSlotPadsMesh.instanceMatrix.needsUpdate = true;
+    buildSlotPadsMesh.visible = openCount > 0;
+  }
 
   function updateBuildGhost(slot, valid = true, visible = false) {
     if (!visible || !slot) {
@@ -1594,6 +1661,7 @@ export function buildWorld(scene) {
     updateShutter,
     updateChevrons,
     updateBuildGhost,
+    updateBuildSlotHighlights,
     buildFurnitureMesh,
     updateCar,
     updateCarCargoVisuals,

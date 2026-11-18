@@ -43,16 +43,42 @@ const ui = new RobloxUI({
     if (!game) return;
     game.touchInput.x = x;
     game.touchInput.z = z;
+    if (Math.hypot(x, z) > 0.08) {
+      game.clearWalkTarget();
+    }
   },
   onTouchJump: () => game && game.queueJump(),
   onModalChange: (modal) => {
     if (game && modal) {
       game.keys.clear();
+      game.touchInput.x = 0;
+      game.touchInput.z = 0;
+      game.clearWalkTarget();
     }
   },
 });
 
 game = new StorageHuntersGame(canvas, ui);
+
+// iPadOS Safari audio unlock + instant touch-mode activation on first finger touch
+window.addEventListener(
+  'touchstart',
+  () => {
+    game.audio.unlock();
+    ui.notifyTouchPointer();
+  },
+  { passive: true }
+);
+window.addEventListener(
+  'pointerdown',
+  (e) => {
+    game.audio.unlock();
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+      ui.notifyTouchPointer();
+    }
+  },
+  { passive: true }
+);
 
 // ---------------- KEYBOARD CONTROLS ----------------
 window.addEventListener('keydown', (e) => {
@@ -110,58 +136,139 @@ window.addEventListener('keyup', (e) => {
   game.keys.delete(e.code);
 });
 
-window.addEventListener('blur', () => {
+const resetAllInputs = () => {
   game.keys.clear();
   game.touchInput.x = 0;
   game.touchInput.z = 0;
+  game.manualOrbitDragging = false;
+  activePointers.clear();
+  pinchPrevDist = 0;
+  ui.resetTouchStick();
+};
+
+window.addEventListener('blur', resetAllInputs);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) resetAllInputs();
 });
 
-// ---------------- POINTER ORBIT & BUILD PLACEMENT ----------------
-let orbitPointerId = null;
+// ---------------- POINTER ORBIT, 2-FINGER PINCH ZOOM & TAP INTERACT ----------------
+const activePointers = new Map();
+let singlePointerId = null;
 let dragStartX = 0;
 let dragStartY = 0;
 let lastPointerX = 0;
 let lastPointerY = 0;
 let dragMoved = false;
+let pinchUsed = false;
+let pinchPrevDist = 0;
+
+function getTwoPointerDistance() {
+  if (activePointers.size < 2) return 0;
+  const pts = Array.from(activePointers.values());
+  return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+}
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+canvas.addEventListener(
+  'wheel',
+  (e) => {
+    if (ui.activeModal || game.auction.active) return;
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 1.07 : 0.93;
+    game.setCameraZoom(game.camZoomScale * factor);
+  },
+  { passive: false }
+);
+
 canvas.addEventListener('pointerdown', (e) => {
+  if (e.target !== canvas) return;
   game.audio.unlock();
-  if (orbitPointerId !== null) return;
-  orbitPointerId = e.pointerId;
-  dragStartX = e.clientX;
-  dragStartY = e.clientY;
-  lastPointerX = e.clientX;
-  lastPointerY = e.clientY;
-  dragMoved = false;
-  game.manualOrbitDragging = true;
-  canvas.setPointerCapture(e.pointerId);
+  if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+    ui.notifyTouchPointer();
+  }
+  activePointers.set(e.pointerId, {
+    x: e.clientX,
+    y: e.clientY,
+    type: e.pointerType,
+  });
+  try {
+    canvas.setPointerCapture(e.pointerId);
+  } catch (_) {}
+
+  if (activePointers.size === 1) {
+    singlePointerId = e.pointerId;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    lastPointerX = e.clientX;
+    lastPointerY = e.clientY;
+    dragMoved = false;
+    pinchUsed = false;
+    pinchPrevDist = 0;
+    game.manualOrbitDragging = true;
+  } else if (activePointers.size === 2) {
+    singlePointerId = null;
+    dragMoved = true;
+    pinchUsed = true;
+    pinchPrevDist = getTwoPointerDistance();
+    game.manualOrbitDragging = true;
+  }
 });
 
 canvas.addEventListener('pointermove', (e) => {
-  if (e.pointerId === orbitPointerId) {
-    const dx = e.clientX - lastPointerX;
-    const dy = e.clientY - lastPointerY;
-    lastPointerX = e.clientX;
-    lastPointerY = e.clientY;
-    if (Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) > 6) {
-      dragMoved = true;
+  const tracked = activePointers.get(e.pointerId);
+  if (tracked) {
+    tracked.x = e.clientX;
+    tracked.y = e.clientY;
+    if (activePointers.size >= 2) {
+      const dist = getTwoPointerDistance();
+      if (pinchPrevDist > 12 && dist > 12 && !game.auction.active && !ui.activeModal) {
+        const ratio = pinchPrevDist / dist;
+        game.setCameraZoom(game.camZoomScale * ratio);
+      }
+      pinchPrevDist = dist;
+      return;
     }
-    if (dragMoved && !game.auction.active && !ui.activeModal) {
-      game.setCameraOrbit(game.camYaw - dx * 0.0065, game.camPitch + dy * 0.0045);
+    if (e.pointerId === singlePointerId) {
+      const dx = e.clientX - lastPointerX;
+      const dy = e.clientY - lastPointerY;
+      lastPointerX = e.clientX;
+      lastPointerY = e.clientY;
+      const deadzone = e.pointerType === 'touch' ? 10 : 6;
+      if (Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) > deadzone) {
+        dragMoved = true;
+      }
+      if (dragMoved && !game.auction.active && !ui.activeModal) {
+        const yawSpeed = e.pointerType === 'touch' ? 0.0068 : 0.0065;
+        const pitchSpeed = e.pointerType === 'touch' ? 0.0046 : 0.0045;
+        game.setCameraOrbit(game.camYaw - dx * yawSpeed, game.camPitch + dy * pitchSpeed);
+      }
     }
-  } else if (game.player.inPawnShop && game.buildTab) {
+  } else if (game.player.inPawnShop && game.buildTab && e.pointerType !== 'touch') {
     game.updateBuildHoverFromPointer(e.clientX, e.clientY);
   }
 });
 
 const endOrbit = (e) => {
-  if (e.pointerId !== orbitPointerId) return;
-  orbitPointerId = null;
-  game.manualOrbitDragging = false;
-  if (!dragMoved) {
-    game.handleCanvasClick(e.clientX, e.clientY);
+  const wasTracked = activePointers.delete(e.pointerId);
+  if (!wasTracked) return;
+
+  if (activePointers.size === 0) {
+    const shouldClick = e.pointerId === singlePointerId && !dragMoved && !pinchUsed;
+    singlePointerId = null;
+    pinchPrevDist = 0;
+    game.manualOrbitDragging = false;
+    if (shouldClick) {
+      game.handleCanvasClick(e.clientX, e.clientY);
+    }
+  } else if (activePointers.size === 1) {
+    // Transition cleanly back to 1-finger orbit after releasing one pinch finger
+    const [remId, remPt] = activePointers.entries().next().value;
+    singlePointerId = remId;
+    lastPointerX = remPt.x;
+    lastPointerY = remPt.y;
+    dragMoved = true;
+    pinchPrevDist = 0;
   }
 };
 canvas.addEventListener('pointerup', endOrbit);
@@ -185,6 +292,10 @@ window.__ROBLOX_STORAGE__ = {
   setInput: (x, z) => game.setInput(x, z),
   setCameraOrbit: (yaw, pitch) => {
     game.setCameraOrbit(yaw, pitch);
+    game._updateCamera(1.0);
+  },
+  setCameraZoom: (scale) => {
+    game.setCameraZoom(scale);
     game._updateCamera(1.0);
   },
   triggerInteract: () => game.triggerInteract(),

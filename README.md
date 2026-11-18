@@ -14,15 +14,16 @@ An authentic browser-based 3D remake of Roblox's *Storage Hunters: Open World* b
 
 ## Controls
 
-| Action | Desktop | Mobile / Touch |
+| Action | Desktop | iPad / Tablet / Mobile Touch |
 | :--- | :--- | :--- |
-| Move / Drive | `WASD` or Arrow Keys | Left Virtual Thumbstick |
+| Move / Steer Car | `WASD` or Arrow Keys | Left Translucent Thumbstick (camera-relative directional car steering & smooth auto-camera follow) |
 | Jump / Bid (in Auction) | `Space` | `JUMP` / `BID` Button |
-| Interact / Pick Up / Load / Drive / Exit | `E` (or click floating prompt) | Contextual `E` Button / Tap Prompt |
+| Interact / Pick Up / Load / Drive / Exit | `E` (or click floating prompt) | Dynamic Green Action Pill (`TALK BILLY`, `BID A2`, `PICK UP`, `LOAD CAR`, `DRIVE`, `EXIT CAR`, `PLACE`, `STOCK`, `QUICK SELL`), `[TAP]` Prompt, or Tap Any 3D NPC/Loot/Car/Locker/Shelf Directly |
 | Equip Hotbar Slot | `1–9` or Click Slot | Tap Slot `1–9` |
-| Camera Orbit | Drag Canvas or `Q` / `R` | Drag Screen |
-| Pawn Shop Build Mode | `B` or `[BUILD] [SHELVES] [DECOR]` tabs | Tap Build Tabs & Floor Tile |
-| Menu / Audio / Upgrades / Reset Save | `Esc` or Top-Left Roblox Icon | Tap Top-Left Roblox Icon |
+| Camera Orbit & Zoom | Drag Canvas, Scroll Wheel, or `Q` / `R` | 1-Finger Drag Orbit & 2-Finger Pinch-to-Zoom |
+| Navigation Arrows | Click `NAVIGATE` or Minimap | Tap `NAVIGATE` or Tap Minimap |
+| Pawn Shop Build Mode | `B` or `[BUILD] [SHELVES] [DECOR]` tabs | Tap Build Tabs & Tap Glowing Blue Floor Tiles (or `PLACE` button) |
+| Menu / Audio / Upgrades / Reset Save | `Esc` or Top-Left Roblox Icon | Tap Top-Left Roblox Icon (Touch Controls auto-enable on iPadOS & phones) |
 
 ## Running Locally & Tests
 
@@ -31,7 +32,7 @@ python3 -m http.server 8855 --directory /tmp/roblox-storage-hunters
 # Open http://localhost:8855/
 ```
 
-Run the automated headless Chrome E2E, 12-seed simulation, persistence, leak, and 4-viewport responsive gate suite:
+Run the automated headless Chrome E2E, 12-seed simulation, persistence, leak, 6-viewport responsive (Desktop + iPad Landscape/Portrait + Phones), and iPad touch operation gate suite:
 
 ```bash
 python3 /tmp/roblox-storage-hunters/tests/sim_gates.py

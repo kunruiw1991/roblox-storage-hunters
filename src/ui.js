@@ -182,6 +182,8 @@ export class RobloxUI {
       navLabel: document.getElementById('nav-label'),
 
       // Alerts & Layout Anchors
+      topLeftHud: document.getElementById('top-left-hud'),
+      topRightHud: document.getElementById('top-right-hud'),
       centerAlerts: document.getElementById('center-alerts'),
       bottomCenterHud: document.getElementById('bottom-center-hud'),
       overweightBanner: document.getElementById('overweight-banner'),
@@ -225,6 +227,7 @@ export class RobloxUI {
 
       // World overlays
       prompt: document.getElementById('proximity-prompt'),
+      promptKeycap: document.querySelector('#proximity-prompt .rbx-keycap'),
       promptAction: document.getElementById('prompt-action'),
       promptSub: document.getElementById('prompt-sub'),
       worldBubbles: document.getElementById('world-bubbles'),
@@ -234,7 +237,9 @@ export class RobloxUI {
       // Touch
       touchControls: document.getElementById('touch-controls'),
       stickZone: document.getElementById('touch-stick-zone'),
+      stickBase: document.getElementById('touch-stick-base'),
       stickKnob: document.getElementById('touch-stick-knob'),
+      touchRightBtns: document.getElementById('touch-right-btns'),
       btnTouchInteract: document.getElementById('btn-touch-interact'),
       btnTouchJump: document.getElementById('btn-touch-jump'),
 
@@ -275,6 +280,7 @@ export class RobloxUI {
     this.activeModal = null;
     this.resetArmed = false;
     this.touchMode = 'auto'; // 'auto' | 'on' | 'off'
+    this._seenTouchPointer = false;
     this.stickPointerId = null;
     this.discTimer = 0;
     this.toastTimer = 0;
@@ -334,8 +340,15 @@ export class RobloxUI {
     });
 
     this.el.btnNavigate.addEventListener('click', () => this.cb.onToggleNavigate());
-    this.el.prompt.addEventListener('click', () => this.cb.onInteract());
-    this.el.btnDriveExit.addEventListener('click', () => this.cb.onInteract());
+    this.el.minimap.addEventListener('click', () => this.cb.onToggleNavigate());
+    this.el.prompt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.cb.onInteract();
+    });
+    this.el.btnDriveExit.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.cb.onInteract();
+    });
     this.el.btnAucBid.addEventListener('click', () => this.cb.onBid());
     this.el.btnAucPass.addEventListener('click', () => this.cb.onPass());
 
@@ -386,14 +399,15 @@ export class RobloxUI {
       this.el.discoveryCard.classList.add('hidden');
     });
 
-    // Touch controls (pointerId isolated!)
+    // Touch controls (pointerId isolated, generous iPad analog feel & deadzone!)
     const stickZone = this.el.stickZone;
+    const stickBase = this.el.stickBase;
     const knob = this.el.stickKnob;
     const updateStick = (clientX, clientY) => {
-      const rect = stickZone.getBoundingClientRect();
+      const rect = stickBase.getBoundingClientRect();
       const cx = rect.left + rect.width * 0.5;
       const cy = rect.top + rect.height * 0.5;
-      const maxR = rect.width * 0.36;
+      const maxR = Math.max(24, rect.width * 0.36);
       let dx = clientX - cx;
       let dy = clientY - cy;
       const len = Math.hypot(dx, dy);
@@ -402,37 +416,68 @@ export class RobloxUI {
         dy = (dy / len) * maxR;
       }
       knob.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
-      this.cb.onTouchMove(dx / maxR, dy / maxR);
+      const normLen = Math.min(1, len / maxR);
+      if (normLen < 0.08) {
+        this.cb.onTouchMove(0, 0);
+      } else {
+        const rescaled = (normLen - 0.08) / 0.92;
+        const ux = dx / Math.max(0.001, Math.hypot(dx, dy));
+        const uy = dy / Math.max(0.001, Math.hypot(dx, dy));
+        this.cb.onTouchMove(ux * rescaled, uy * rescaled);
+      }
     };
     stickZone.addEventListener('pointerdown', (e) => {
       if (this.stickPointerId !== null) return;
+      if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+        this._seenTouchPointer = true;
+      }
       this.stickPointerId = e.pointerId;
-      stickZone.setPointerCapture(e.pointerId);
+      stickBase.classList.add('active');
+      try {
+        stickZone.setPointerCapture(e.pointerId);
+      } catch (_) {}
       updateStick(e.clientX, e.clientY);
+      e.preventDefault();
       e.stopPropagation();
     });
     stickZone.addEventListener('pointermove', (e) => {
       if (e.pointerId !== this.stickPointerId) return;
       updateStick(e.clientX, e.clientY);
+      e.preventDefault();
       e.stopPropagation();
     });
     const endStick = (e) => {
       if (e.pointerId !== this.stickPointerId) return;
-      this.stickPointerId = null;
-      knob.style.transform = 'translate(0px, 0px)';
-      this.cb.onTouchMove(0, 0);
+      this.resetTouchStick();
+      e.stopPropagation();
     };
     stickZone.addEventListener('pointerup', endStick);
     stickZone.addEventListener('pointercancel', endStick);
+    stickZone.addEventListener('lostpointercapture', endStick);
 
     this.el.btnTouchJump.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
       e.stopPropagation();
       this.cb.onTouchJump();
     });
     this.el.btnTouchInteract.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
       e.stopPropagation();
       this.cb.onInteract();
     });
+  }
+
+  notifyTouchPointer() {
+    if (!this._seenTouchPointer) {
+      this._seenTouchPointer = true;
+    }
+  }
+
+  resetTouchStick() {
+    this.stickPointerId = null;
+    if (this.el.stickBase) this.el.stickBase.classList.remove('active');
+    if (this.el.stickKnob) this.el.stickKnob.style.transform = 'translate(0px, 0px)';
+    this.cb.onTouchMove(0, 0);
   }
 
   addChatLine(sender, text) {
@@ -622,13 +667,19 @@ export class RobloxUI {
     if (!silent) this.cb.onModalChange(null);
   }
 
-  shouldShowTouchControls() {
+  isTouchEnvironment() {
     if (this.touchMode === 'on') return true;
     if (this.touchMode === 'off') return false;
-    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-    const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    const narrowOrShort = window.innerWidth <= 860 && (window.innerHeight <= 460 || window.innerWidth <= 560);
-    return (coarse || hasTouch) && narrowOrShort;
+    const coarse =
+      window.matchMedia &&
+      (window.matchMedia('(pointer: coarse)').matches ||
+        window.matchMedia('(any-pointer: coarse)').matches);
+    const hasTouch = 'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0;
+    return Boolean(coarse || hasTouch || this._seenTouchPointer);
+  }
+
+  shouldShowTouchControls() {
+    return this.isTouchEnvironment();
   }
 
   step(dt) {
@@ -806,11 +857,40 @@ export class RobloxUI {
       this.el.aucLeaderBid.textContent = `$${a.currentBid.toFixed(2)}`;
     }
 
-    // Touch controls visibility
-    const showTouch = this.shouldShowTouchControls() && !inAuction && !this.activeModal;
+    // Touch controls & iPad / tablet ergonomics
+    const isTouchEnv = this.isTouchEnvironment();
+    const showTouch = isTouchEnv && !inAuction && !this.activeModal;
+    document.body.classList.toggle('touch-device', isTouchEnv);
+    document.body.classList.toggle('touch-active', showTouch);
+
+    if (this.el.promptKeycap) {
+      const capText = isTouchEnv ? 'TAP' : 'E';
+      if (this.el.promptKeycap.textContent !== capText) {
+        this.el.promptKeycap.textContent = capText;
+      }
+    }
+    if (this.el.btnDriveExit) {
+      const exitText = isTouchEnv ? 'Exit Car' : '[E] Exit';
+      if (this.el.btnDriveExit.textContent !== exitText) {
+        this.el.btnDriveExit.textContent = exitText;
+      }
+    }
+
+    const wasTouchHidden = this.el.touchControls.classList.contains('hidden');
     this.el.touchControls.classList.toggle('hidden', !showTouch);
+    if (!showTouch && !wasTouchHidden && this.stickPointerId !== null) {
+      this.resetTouchStick();
+    }
     if (showTouch) {
-      this.el.btnTouchInteract.classList.toggle('hidden', !state.hasPrompt && !state.driving);
+      const showInteract = Boolean(state.hasPrompt || state.driving);
+      this.el.btnTouchInteract.classList.toggle('hidden', !showInteract);
+      if (showInteract) {
+        const lbl = state.touchActionLabel || (state.driving ? 'EXIT CAR' : 'USE');
+        if (this.el.btnTouchInteract.textContent !== lbl) {
+          this.el.btnTouchInteract.textContent = lbl;
+        }
+      }
+      this.el.btnTouchJump.classList.toggle('hidden', !!state.driving);
     }
 
     // Minimap
@@ -969,8 +1049,27 @@ export class RobloxUI {
 
   updateWorldOverlays(camera, width, height, { prompt, bubbles, offers }) {
     const touchActive = !this.el.touchControls.classList.contains('hidden');
-    const leftPad = touchActive ? 98 : 12;
-    const rightPad = touchActive ? 74 : 12;
+    let leftPad = 12;
+    let rightPad = 12;
+    let stickRect = null;
+    let rightBtnRect = null;
+    if (touchActive) {
+      if (this.el.stickZone) {
+        const sr = this.el.stickZone.getBoundingClientRect();
+        if (sr.width > 4 && sr.height > 4) {
+          stickRect = sr;
+          leftPad = Math.max(leftPad, Math.ceil(sr.right) + 12);
+        }
+      }
+      if (this.el.touchRightBtns) {
+        const rr = this.el.touchRightBtns.getBoundingClientRect();
+        if (rr.width > 4 && rr.height > 4) {
+          rightBtnRect = rr;
+          rightPad = Math.max(rightPad, Math.ceil(width - rr.left) + 12);
+        }
+      }
+    }
+
     let bottomLimit = height - (width <= 600 ? 185 : height <= 480 ? 64 : 84);
     if (this.el.bottomCenterHud) {
       const bRect = this.el.bottomCenterHud.getBoundingClientRect();
@@ -984,6 +1083,44 @@ export class RobloxUI {
       const r = this.el.centerAlerts.getBoundingClientRect();
       if (r.height > 4 && r.width > 4) alertRect = r;
     }
+    let topLeftRect = null;
+    if (this.el.topLeftHud) {
+      const r = this.el.topLeftHud.getBoundingClientRect();
+      if (r.height > 4 && r.width > 4) topLeftRect = r;
+    }
+    let topRightRect = null;
+    if (this.el.topRightHud) {
+      const r = this.el.topRightHud.getBoundingClientRect();
+      if (r.height > 4 && r.width > 4) topRightRect = r;
+    }
+
+    const avoidRect = (sx, sy, halfW, boxH, rect, prefer = 'above') => {
+      if (!rect) return { sx, sy };
+      const horizOverlap = sx + halfW > rect.left - 8 && sx - halfW < rect.right + 8;
+      const vertOverlap = sy > rect.top - 8 && sy - boxH < rect.bottom + 8;
+      if (!horizOverlap || !vertOverlap) return { sx, sy };
+
+      const rightSpot = rect.right + halfW + 10;
+      const leftSpot = rect.left - halfW - 10;
+      const aboveSy = rect.top - 10;
+      const belowSy = rect.bottom + boxH + 10;
+
+      if (prefer === 'right') {
+        if (rightSpot + halfW <= width - 12) return { sx: rightSpot, sy };
+        if (belowSy <= bottomLimit) return { sx, sy: belowSy };
+        if (leftSpot - halfW >= 12) return { sx: leftSpot, sy };
+      } else if (prefer === 'left') {
+        if (leftSpot - halfW >= 12) return { sx: leftSpot, sy };
+        if (belowSy <= bottomLimit) return { sx, sy: belowSy };
+        if (rightSpot + halfW <= width - 12) return { sx: rightSpot, sy };
+      } else {
+        if (aboveSy - boxH >= 54) return { sx, sy: aboveSy };
+        if (rightSpot + halfW <= width - 12) return { sx: rightSpot, sy };
+        if (leftSpot - halfW >= 12) return { sx: leftSpot, sy };
+        if (belowSy <= bottomLimit) return { sx, sy: belowSy };
+      }
+      return { sx, sy };
+    };
 
     // 1. Proximity Prompt (dynamically clamped clear of #center-alerts, #bottom-center-hud & touch buttons)
     if (prompt && !this.activeModal) {
@@ -995,9 +1132,12 @@ export class RobloxUI {
         this.el.prompt.classList.remove('hidden');
         const halfW = Math.max(58, Math.ceil(this.el.prompt.offsetWidth * 0.5) + 6);
         const promptH = Math.max(36, Math.ceil(this.el.prompt.offsetHeight));
+        const maxSidePad = Math.max(12, Math.floor((width - halfW * 2) * 0.5));
+        const effLeftPad = Math.min(leftPad, maxSidePad);
+        const effRightPad = Math.min(rightPad, maxSidePad);
         let sx = (this._projVec.x * 0.5 + 0.5) * width;
         let sy = (-this._projVec.y * 0.5 + 0.5) * height;
-        sx = Math.max(halfW + leftPad, Math.min(width - halfW - rightPad, sx));
+        sx = Math.max(halfW + effLeftPad, Math.min(width - halfW - effRightPad, sx));
         sy = Math.max(promptH + 54, Math.min(bottomLimit, sy));
 
         if (alertRect) {
@@ -1013,9 +1153,9 @@ export class RobloxUI {
               // Dock cleanly beside alerts if vertical clearance is ultra-tight
               const rightSpot = alertRect.right + halfW + 10;
               const leftSpot = alertRect.left - halfW - 10;
-              if (rightSpot + halfW <= width - rightPad) {
+              if (rightSpot + halfW <= width - effRightPad) {
                 sx = rightSpot;
-              } else if (leftSpot - halfW >= leftPad) {
+              } else if (leftSpot - halfW >= effLeftPad) {
                 sx = leftSpot;
               } else {
                 sy = bottomLimit;
@@ -1023,6 +1163,11 @@ export class RobloxUI {
             }
           }
         }
+
+        ({ sx, sy } = avoidRect(sx, sy, halfW, promptH, topLeftRect, 'right'));
+        ({ sx, sy } = avoidRect(sx, sy, halfW, promptH, topRightRect, 'left'));
+        ({ sx, sy } = avoidRect(sx, sy, halfW, promptH, stickRect, 'above'));
+        ({ sx, sy } = avoidRect(sx, sy, halfW, promptH, rightBtnRect, 'above'));
 
         this.el.prompt.style.left = `${sx.toFixed(1)}px`;
         this.el.prompt.style.top = `${sy.toFixed(1)}px`;
@@ -1098,8 +1243,18 @@ export class RobloxUI {
         header.innerHTML = `${off.itemName}: <span class="offer-price">$${off.offerPrice} (${pctTxt})</span>`;
       }
 
-      const sx = Math.max(82, Math.min(width - 82, (this._projVec.x * 0.5 + 0.5) * width));
-      const sy = Math.max(96, Math.min(height - 150, (-this._projVec.y * 0.5 + 0.5) * height));
+      const cardHalfW = Math.max(82, Math.ceil(card.offsetWidth * 0.5) + 6);
+      const cardH = Math.max(60, Math.ceil(card.offsetHeight));
+      const maxCardSide = Math.max(12, Math.floor((width - cardHalfW * 2) * 0.5));
+      let sx = Math.max(
+        cardHalfW + Math.min(leftPad, maxCardSide),
+        Math.min(width - cardHalfW - Math.min(rightPad, maxCardSide), (this._projVec.x * 0.5 + 0.5) * width)
+      );
+      let sy = Math.max(96, Math.min(bottomLimit, (-this._projVec.y * 0.5 + 0.5) * height));
+      ({ sx, sy } = avoidRect(sx, sy, cardHalfW, cardH, topLeftRect, 'right'));
+      ({ sx, sy } = avoidRect(sx, sy, cardHalfW, cardH, topRightRect, 'left'));
+      ({ sx, sy } = avoidRect(sx, sy, cardHalfW, cardH, stickRect, 'above'));
+      ({ sx, sy } = avoidRect(sx, sy, cardHalfW, cardH, rightBtnRect, 'above'));
       card.style.left = `${sx.toFixed(1)}px`;
       card.style.top = `${sy.toFixed(1)}px`;
     }

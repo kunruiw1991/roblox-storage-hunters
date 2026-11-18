@@ -178,18 +178,27 @@ class CDPClient:
         Path(out_path).write_bytes(raw)
         return out_path
 
-    async def set_viewport(self, w, h, mobile=False):
+    async def set_viewport(self, w, h, mobile=False, touch=None):
+        use_touch = mobile if touch is None else touch
         await self.send('Emulation.setDeviceMetricsOverride', {
             'width': w,
             'height': h,
             'deviceScaleFactor': 1,
             'mobile': mobile,
         })
-        if mobile:
+        if use_touch:
             await self.send('Emulation.setTouchEmulationEnabled', {'enabled': True, 'maxTouchPoints': 5})
         else:
             await self.send('Emulation.setTouchEmulationEnabled', {'enabled': False})
-        await self.eval('window.dispatchEvent(new Event("resize")); window.__ROBLOX_STORAGE__.render();')
+        await self.eval('''(() => {
+            const g = window.__ROBLOX_STORAGE__._game;
+            if (!''' + ('true' if use_touch else 'false') + ''') {
+                g.ui._seenTouchPointer = false;
+                g.ui.touchMode = 'auto';
+            }
+            window.dispatchEvent(new Event("resize"));
+            window.__ROBLOX_STORAGE__.render();
+        })()''')
         await asyncio.sleep(0.12)
 
     async def close(self):
@@ -705,13 +714,15 @@ async def run_all_gates():
             assert stress_calls['peak'] <= 85, f'Map-wide stress draw calls > 85: {stress_calls}'
             print(f"  PASS (peak={stress_calls['peak']} <= 85 | {stress_calls['results']})")
 
-            # Gate 7: 4-Viewport Responsive Layout Overlap & Zero-Scrollbar Audit (incl. active alerts, chat/LB, auction badge!)
-            print('[Gate 7] 4-Viewport Responsive Overlap & Zero-Scrollbar Audit...')
+            # Gate 7: 6-Viewport Responsive Layout Overlap & Zero-Scrollbar Audit (Desktop + iPad Landscape/Portrait + Phones!)
+            print('[Gate 7] 6-Viewport Responsive Overlap & Zero-Scrollbar Audit (incl. iPad Landscape & Portrait)...')
             viewports = [
-                (1280, 800, False, '1280x800'),
-                (1024, 768, False, '1024x768'),
-                (844, 390, True, '844x390'),
-                (390, 844, True, '390x844'),
+                (1280, 800, False, False, '1280x800'),
+                (1024, 768, False, True, 'ipad_1024x768'),
+                (1180, 820, False, True, 'ipad_1180x820'),
+                (768, 1024, False, True, 'ipad_768x1024'),
+                (844, 390, True, True, '844x390'),
+                (390, 844, True, True, '390x844'),
             ]
             overlap_js = '''(() => {
                 const W = window.innerWidth, H = window.innerHeight;
@@ -756,8 +767,8 @@ async def run_all_gates():
                 return { overlaps, scroll, boxes };
             })()'''
 
-            for w, h, mob, tag in viewports:
-                await cdp.set_viewport(w, h, mob)
+            for w, h, mob, touch, tag in viewports:
+                await cdp.set_viewport(w, h, mob, touch)
                 # Check Normal Explore HUD + ALL 3 Active Alerts (#overweight + #discovery + #toast) + Drive Wagon Prompt (D1!)
                 await cdp.eval('''(() => {
                     const api = window.__ROBLOX_STORAGE__;
@@ -790,27 +801,39 @@ async def run_all_gates():
                 })()''')
                 res_chat = await cdp.eval(overlap_js)
                 assert res_chat['overlaps'] == [], f'{tag} chat-open overlaps: {res_chat["overlaps"]}'
-                if tag == '390x844':
+                if tag in ('390x844', 'ipad_768x1024'):
                     # Force-open leaderboard via toggle -> verify chat auto-closes AND zero overlap!
                     await cdp.eval('document.getElementById("btn-lb-toggle").click(); window.__ROBLOX_STORAGE__.render();')
                     chat_closed = await cdp.eval('document.getElementById("chat-panel").classList.contains("hidden")')
-                    assert chat_closed is True, 'Opening leaderboard did not close chat on 390x844!'
+                    assert chat_closed is True, f'Opening leaderboard did not close chat on {tag}!'
                     res_lb = await cdp.eval(overlap_js)
                     assert res_lb['overlaps'] == [], f'{tag} lb-open overlaps: {res_lb["overlaps"]}'
                     await cdp.eval('document.getElementById("btn-lb-toggle").click();')
                 else:
                     await cdp.eval('document.getElementById("btn-chat").click();')
 
-                # Check Normal Clean Explore HUD
-                await cdp.eval('window.__ROBLOX_STORAGE__.resetSave(); window.__ROBLOX_STORAGE__._game.ui.dismissAlerts(); window.__ROBLOX_STORAGE__.step(1/60, 4); window.__ROBLOX_STORAGE__.render();')
+                # Check Normal Clean Explore HUD (near Wagon so dynamic touch DRIVE pill is also checked!)
+                await cdp.eval('''(() => {
+                    const api = window.__ROBLOX_STORAGE__;
+                    const g = api._game;
+                    api.resetSave();
+                    g.ui.dismissAlerts();
+                    g.player.x = g.car.x + 2.2; g.player.z = g.car.z + 2.0;
+                    api.step(1/60, 4);
+                    api.render();
+                })()''')
                 res_norm = await cdp.eval(overlap_js)
                 assert res_norm['overlaps'] == [], f'{tag} normal overlaps: {res_norm["overlaps"]}'
                 assert res_norm['scroll']['sw'] <= res_norm['scroll']['iw'] + 1
                 assert res_norm['scroll']['sh'] <= res_norm['scroll']['ih'] + 1
                 if mob:
                     await cdp.screenshot(CAP_DIR / f'07_mobile_{tag}_explore.png')
+                elif tag == 'ipad_1024x768':
+                    await cdp.screenshot(CAP_DIR / '09_ipad_1024x768_explore.png')
+                elif tag == 'ipad_768x1024':
+                    await cdp.screenshot(CAP_DIR / '09_ipad_768x1024_portrait.png')
 
-                # Check Active Auction HUD (including single-line LOCKER A2 badge check on 844x390!)
+                # Check Active Auction HUD (including single-line LOCKER A2 badge check!)
                 await cdp.eval('window.__ROBLOX_STORAGE__.startAuction("A2"); window.__ROBLOX_STORAGE__.step(1/30, 8); window.__ROBLOX_STORAGE__.render();')
                 res_auc = await cdp.eval(overlap_js)
                 assert res_auc['overlaps'] == [], f'{tag} auction overlaps: {res_auc["overlaps"]}'
@@ -818,20 +841,27 @@ async def run_all_gates():
                 assert badge_h <= 26, f'{tag} LOCKER A2 badge wrapped to 2 lines (h={badge_h})!'
                 if tag == '844x390':
                     await cdp.screenshot(CAP_DIR / '08_mobile_844x390_auction.png')
+                elif tag == 'ipad_1024x768':
+                    await cdp.screenshot(CAP_DIR / '09_ipad_1024x768_auction.png')
                 await cdp.eval('window.__ROBLOX_STORAGE__.passAuction();')
 
-                # Check Pawn Shop Build Mode HUD
+                # Check Pawn Shop Build Mode HUD (facing South into shop so glowing open build pads are visible!)
                 await cdp.eval('''(() => {
                     const g = window.__ROBLOX_STORAGE__._game;
-                    g.player.x = 0; g.player.z = 29;
+                    g.player.x = 0; g.player.z = 26.2; g.player.yaw = 0;
+                    g.setCameraOrbit(0, 0.42);
+                    g._updateCamera(1.0);
                     window.__ROBLOX_STORAGE__.step(1/60, 4);
                     window.__ROBLOX_STORAGE__.setShopBuildTab("SHELVES", "shelf_table");
+                    window.__ROBLOX_STORAGE__.step(1/60, 2);
                     window.__ROBLOX_STORAGE__.render();
                 })()''')
                 res_shop = await cdp.eval(overlap_js)
                 assert res_shop['overlaps'] == [], f'{tag} shop-build overlaps: {res_shop["overlaps"]}'
                 if mob:
                     await cdp.screenshot(CAP_DIR / f'08_mobile_{tag}_shop.png')
+                elif tag == 'ipad_1024x768':
+                    await cdp.screenshot(CAP_DIR / '09_ipad_1024x768_shop_build.png')
 
                 # Check Menu Modal has zero overflow scrollbars!
                 await cdp.eval('document.getElementById("btn-menu").click();')
@@ -843,10 +873,140 @@ async def run_all_gates():
                 assert modal_ov['sh'] <= modal_ov['ch'] + 2, f'{tag} menu modal overflow: {modal_ov}'
                 await cdp.eval('document.querySelector("#modal-menu [data-close-modal]").click();')
 
-            print('  PASS (0 overlaps, 0 offscreen, 0 scrollbars across 1280x800, 1024x768, 844x390, 390x844!)')
+            print('  PASS (0 overlaps, 0 offscreen, 0 scrollbars across 1280x800, iPad 1024x768/1180x820/768x1024, 844x390, 390x844!)')
+
+            # Gate 8: Dedicated iPad Touch Ergonomics, Directional Driving, Tap-to-Walk/Interact, Pinch Zoom & Build Pads
+            print('[Gate 8] iPad Touch Operation Gate (Auto-Detect, Directional Driving, Tap-to-Walk, Pinch Zoom, Build Floor Pads)...')
+            await cdp.set_viewport(1024, 768, False, True)
+            ipad_check = await cdp.eval('''(() => {
+                const api = window.__ROBLOX_STORAGE__;
+                const g = api._game;
+                api.resetSave();
+                g.ui.dismissAlerts();
+                g.player.x = g.car.x + 2.0; g.player.z = g.car.z + 2.0;
+                api.step(1/60, 4);
+                api.render();
+
+                const tcVis = !document.getElementById('touch-controls').classList.contains('hidden');
+                const stickRect = document.getElementById('touch-stick-zone').getBoundingClientRect();
+                const jumpRect = document.getElementById('btn-touch-jump').getBoundingClientRect();
+                const interactBtn = document.getElementById('btn-touch-interact');
+                const interactLabel = interactBtn.textContent.trim();
+                const keycapTxt = document.querySelector('#proximity-prompt .rbx-keycap').textContent.trim();
+                const blHudDisp = getComputedStyle(document.getElementById('bottom-left-hud')).display;
+                const mStatsDisp = getComputedStyle(document.getElementById('mobile-stats-strip')).display;
+
+                // 8a. Directional Thumbstick Driving: push PURE RIGHT (1, 0) from 0 MPH!
+                g.car.x = 0; g.car.z = 8.6; g.car.yaw = Math.PI; g.car.speed = 0;
+                g.camYaw = Math.PI; g.camPitch = 0.32;
+                api.toggleDrive();
+                api.step(1/60, 2);
+                api.render();
+                const exitLabel = document.getElementById('btn-touch-interact').textContent.trim();
+                const driveExitTxt = document.getElementById('btn-drive-exit').textContent.trim();
+                const jumpHiddenDriving = document.getElementById('btn-touch-jump').classList.contains('hidden');
+                const yawBefore = g.car.yaw;
+                g.touchInput.x = 1.0; g.touchInput.z = 0.0;
+                api.step(1/30, 26);
+                api.render();
+                const speedMph = Math.abs(g.car.speed) * 2.2;
+                const yawAfter = g.car.yaw;
+                g.touchInput.x = 0; g.touchInput.z = 0;
+                return {
+                    tcVis,
+                    stickW: stickRect.width,
+                    jumpW: jumpRect.width,
+                    interactLabel,
+                    keycapTxt,
+                    blHudDisp,
+                    mStatsDisp,
+                    exitLabel,
+                    driveExitTxt,
+                    jumpHiddenDriving,
+                    speedMph,
+                    yawBefore,
+                    yawAfter,
+                };
+            })()''')
+            assert ipad_check['tcVis'] is True, f'Touch controls did not auto-enable on iPad 1024x768! {ipad_check}'
+            assert ipad_check['stickW'] >= 120, f'iPad thumbstick too small: {ipad_check["stickW"]}'
+            assert ipad_check['jumpW'] >= 68, f'iPad Jump button too small: {ipad_check["jumpW"]}'
+            assert ipad_check['interactLabel'] == 'DRIVE', f'Expected dynamic DRIVE touch label, got {ipad_check["interactLabel"]}'
+            assert ipad_check['keycapTxt'] == 'TAP', f'Expected TAP keycap on iPad, got {ipad_check["keycapTxt"]}'
+            assert ipad_check['blHudDisp'] == 'none' and ipad_check['mStatsDisp'] != 'none', f'Stats layout wrong on iPad: {ipad_check}'
+            assert ipad_check['exitLabel'] == 'EXIT CAR', f'Expected EXIT CAR touch button while driving, got {ipad_check["exitLabel"]}'
+            assert ipad_check['driveExitTxt'] == 'Exit Car', f'Expected touch-friendly Exit Car label, got {ipad_check["driveExitTxt"]}'
+            assert ipad_check['jumpHiddenDriving'] is True, 'Jump button should hide cleanly while driving!'
+            assert ipad_check['speedMph'] > 8.0, f'Directional thumbstick driving stalled on pure-Right push! {ipad_check}'
+            yaw_diff = ((ipad_check['yawAfter'] - ipad_check['yawBefore'] + math.pi) % (2 * math.pi)) - math.pi
+            assert yaw_diff < -0.35, f'Car failed to steer clockwise on Right stick push: yaw_diff={yaw_diff}'
+            await cdp.screenshot(CAP_DIR / '09_ipad_1024x768_driving.png')
+
+            # 8b. Tap-to-Walk & Auto-Interact on Billy + Pinch-to-Zoom + Pawn Shop Build Tap-to-Place
+            ipad_tap = await cdp.eval('''(() => {
+                const api = window.__ROBLOX_STORAGE__;
+                const g = api._game;
+                api.toggleDrive(); // Exit car
+                api.resetSave();
+                g.ui.dismissAlerts();
+                // Place player 9u south of Billy facing North so Billy is squarely visible on screen
+                g.player.x = -19.5; g.player.z = 1.5; g.player.yaw = Math.PI;
+                g.setCameraOrbit(Math.PI, 0.30);
+                g._updateCamera(1.0);
+                api.render();
+
+                const rect = g.canvas.getBoundingClientRect();
+                const p = g.npcRigs.billy.group.position.clone();
+                p.y += 1.4;
+                p.project(g.camera);
+                const sx = rect.left + (p.x * 0.5 + 0.5) * rect.width;
+                const sy = rect.top + (-p.y * 0.5 + 0.5) * rect.height;
+                g.handleCanvasClick(sx, sy);
+                const walkStarted = g.getState().hasWalkTarget;
+                for (let i = 0; i < 90; i++) {
+                    api.step(1/30, 1);
+                    if (g.ui.activeModal === 'npc') break;
+                }
+                const billyOpened = g.ui.activeModal === 'npc';
+                g.ui.closeModals();
+
+                // Pinch-to-zoom via 2 real touch pointers on canvas
+                const c = g.canvas;
+                const zBefore = g.camZoomScale;
+                c.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 11, pointerType: 'touch', clientX: 400, clientY: 380, bubbles: true }));
+                c.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 12, pointerType: 'touch', clientX: 600, clientY: 380, bubbles: true }));
+                c.dispatchEvent(new PointerEvent('pointermove', { pointerId: 12, pointerType: 'touch', clientX: 720, clientY: 380, bubbles: true }));
+                c.dispatchEvent(new PointerEvent('pointerup', { pointerId: 12, pointerType: 'touch', clientX: 720, clientY: 380, bubbles: true }));
+                c.dispatchEvent(new PointerEvent('pointerup', { pointerId: 11, pointerType: 'touch', clientX: 400, clientY: 380, bubbles: true }));
+                const zAfterSpread = g.camZoomScale;
+
+                // Pawn Shop Build Mode floor pads visible + tap floor slot to place
+                g.player.x = 0; g.player.z = 26.0; g.player.yaw = 0;
+                g.setCameraOrbit(0, 0.36);
+                g.setCameraZoom(1.0);
+                api.step(1/30, 3);
+                api.setShopBuildTab('SHELVES', 'shelf_table');
+                api.step(1/30, 2);
+                api.render();
+                const buildCalls = api.rendererInfo.calls;
+                const slot = g.shelfSlots[7];
+                const sp = p.set(slot.x, slot.y + 0.05, slot.z).project(g.camera);
+                const fsx = rect.left + (sp.x * 0.5 + 0.5) * rect.width;
+                const fsy = rect.top + (-sp.y * 0.5 + 0.5) * rect.height;
+                const furnBefore = g.getState().furnitureCount;
+                g.handleCanvasClick(fsx, fsy);
+                const furnAfter = g.getState().furnitureCount;
+
+                return { walkStarted, billyOpened, zBefore, zAfterSpread, buildCalls, furnBefore, furnAfter };
+            })()''')
+            assert ipad_tap['walkStarted'] is True and ipad_tap['billyOpened'] is True, f'Tap-to-walk/interact Billy failed: {ipad_tap}'
+            assert ipad_tap['zAfterSpread'] < ipad_tap['zBefore'] - 0.1, f'2-finger pinch zoom-in failed: {ipad_tap}'
+            assert ipad_tap['furnAfter'] == ipad_tap['furnBefore'] + 1, f'Tap-to-place floor tile in Pawn Shop failed: {ipad_tap}'
+            assert ipad_tap['buildCalls'] <= 85, f'Build mode draw calls > 85: {ipad_tap["buildCalls"]}'
+            print(f"  PASS (auto-detect iPad, dir-drive {ipad_check['speedMph']:.1f} MPH, tap-walk Billy, pinch zoom {ipad_tap['zBefore']:.2f}->{ipad_tap['zAfterSpread']:.2f}, build tap-place calls={ipad_tap['buildCalls']})")
 
             # Hero 1280x800 screenshot.jpg (Open Locker A2 lively auction scene with player, rivals, Auctioneer, lime A2 graffiti, full Roblox HUD!)
-            await cdp.set_viewport(1280, 800, False)
+            await cdp.set_viewport(1280, 800, False, False)
             await cdp.eval('''(() => {
                 const api = window.__ROBLOX_STORAGE__;
                 api.resetSave();
@@ -873,7 +1033,7 @@ async def run_all_gates():
             assert QuietHandler.bad_requests == [], f'HTTP >=400 requests: {QuietHandler.bad_requests}'
 
             await cdp.close()
-            print('\nALL 7 GATES PASSED WITH 0 ERRORS!')
+            print('\nALL 8 GATES PASSED WITH 0 ERRORS!')
     finally:
         proc.terminate()
         try:
