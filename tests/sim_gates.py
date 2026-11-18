@@ -937,10 +937,59 @@ async def run_all_gates():
             assert ipad_check['exitLabel'] == 'EXIT CAR', f'Expected EXIT CAR touch button while driving, got {ipad_check["exitLabel"]}'
             assert ipad_check['driveExitTxt'] == 'Exit Car', f'Expected touch-friendly Exit Car label, got {ipad_check["driveExitTxt"]}'
             assert ipad_check['jumpHiddenDriving'] is True, 'Jump button should hide cleanly while driving!'
-            assert ipad_check['speedMph'] > 8.0, f'Directional thumbstick driving stalled on pure-Right push! {ipad_check}'
+            assert 8.0 < ipad_check['speedMph'] < 16.0, f'Sideways stick push should crawl (8-16 mph), not stall or sprint: {ipad_check}'
             yaw_diff = ((ipad_check['yawAfter'] - ipad_check['yawBefore'] + math.pi) % (2 * math.pi)) - math.pi
             assert yaw_diff < -0.35, f'Car failed to steer clockwise on Right stick push: yaw_diff={yaw_diff}'
             await cdp.screenshot(CAP_DIR / '09_ipad_1024x768_driving.png')
+
+            # 8a2. Runaway-control regression: nothing may move, turn or orbit without live input.
+            ctl = await cdp.eval('''(() => {
+                const api = window.__ROBLOX_STORAGE__; const g = api._game; const o = {};
+                const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+                const idle = () => { g.touchInput.x = 0; g.touchInput.z = 0; g.setInput(0, 0); g.keys.clear(); g.walkTarget = null; };
+                // Driving: stick held straight down 5 s -> brake/reverse only, camera never swings round.
+                g.car.x = 0; g.car.z = 8.6; g.car.yaw = Math.PI / 2; g.car.speed = 0; g.camYaw = Math.PI / 2; idle();
+                api.step(1/60, 5);
+                g.touchInput.z = 1; let flips = 0, last = 0, cam = 0, prev = g.camYaw;
+                for (let i = 0; i < 300; i++) { api.step(1/60, 1);
+                    const sg = Math.abs(g.car.speed) > 0.6 ? Math.sign(g.car.speed) : 0;
+                    if (sg && last && sg !== last) flips++; if (sg) last = sg;
+                    cam += Math.abs(wrap(g.camYaw - prev)); prev = g.camYaw; }
+                o.revFlips = flips; o.revCamTravel = cam; o.revSpeed = g.car.speed;
+                // Release: car stops and stays stopped; heading frozen.
+                idle(); api.step(1/60, 90); const y1 = g.car.yaw, x1 = g.car.x, z1 = g.car.z; api.step(1/60, 120);
+                o.stopSpeed = Math.abs(g.car.speed); o.stopDrift = Math.hypot(g.car.x - x1, g.car.z - z1); o.stopYawDrift = Math.abs(wrap(g.car.yaw - y1));
+                api.toggleDrive();
+                // Walking: stick held hard right 4 s -> camera yaw must not change by itself.
+                idle(); g.player.x = 0; g.player.z = 4; api.step(1/60, 5);
+                g.touchInput.x = 1; cam = 0; prev = g.camYaw;
+                for (let i = 0; i < 240; i++) { api.step(1/60, 1); cam += Math.abs(wrap(g.camYaw - prev)); prev = g.camYaw; }
+                o.walkCamTravel = cam; idle(); api.step(1/60, 20); o.walkStopSpeed = g.player.speed;
+                // Tap-to-walk: cancellable, and gives up on an unreachable target.
+                g.walkTarget = { x: g.player.x + 12, z: g.player.z, stopDist: 1, target: { type: 'none' }, stuckTime: 0, lastDist: 12, timeLeft: 5 };
+                api.step(1/60, 10); o.walkingSpeed = g.player.speed; g.cancelAutoWalk();
+                const px = g.player.x, pz = g.player.z; api.step(1/60, 60); o.cancelDrift = Math.hypot(g.player.x - px, g.player.z - pz);
+                g.walkTarget = { x: g.player.x + 400, z: g.player.z, stopDist: 1, target: { type: 'none' }, stuckTime: 0, lastDist: 400, timeLeft: 2 };
+                api.step(1/60, 150); o.budgetStillWalking = Boolean(g.walkTarget); idle();
+                // Latched stick: a stale pointer id must be replaced by a new finger and released by touchend.
+                const z = document.getElementById('touch-stick-zone'); const r = z.getBoundingClientRect();
+                const ev = (t, id, x, y) => z.dispatchEvent(new PointerEvent(t, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true }));
+                ev('pointerdown', 31, r.left + r.width * 0.9, r.top + r.height * 0.5);   // finger A, pointerup lost
+                o.latched = Math.hypot(g.touchInput.x, g.touchInput.z);
+                ev('pointerdown', 32, r.left + r.width * 0.5, r.top + r.height * 0.5);   // finger B at centre
+                o.afterNewFinger = Math.hypot(g.touchInput.x, g.touchInput.z);
+                ev('pointermove', 32, r.left + r.width * 0.9, r.top + r.height * 0.5);
+                const te = new Event('touchend'); Object.defineProperty(te, 'touches', { value: [] }); window.dispatchEvent(te);
+                o.afterTouchEnd = Math.hypot(g.touchInput.x, g.touchInput.z);
+                api.toggleDrive(); g.car.speed = 0;
+                return o;
+            })()''')
+            assert ctl['revFlips'] == 0 and ctl['revCamTravel'] < 0.2 and ctl['revSpeed'] <= 0.01, f'Reverse flip-flop / camera swing: {ctl}'
+            assert ctl['stopSpeed'] < 0.01 and ctl['stopDrift'] < 0.01 and ctl['stopYawDrift'] < 0.001, f'Car keeps moving with no input: {ctl}'
+            assert ctl['walkCamTravel'] < 0.001 and ctl['walkStopSpeed'] == 0, f'Camera/avatar moves by itself while walking: {ctl}'
+            assert ctl['walkingSpeed'] > 5 and ctl['cancelDrift'] < 0.001, f'Auto-walk not cancellable: {ctl}'
+            assert ctl['budgetStillWalking'] is False, f'Auto-walk has no time budget: {ctl}'
+            assert ctl['latched'] > 0.5 and ctl['afterNewFinger'] < 0.05 and ctl['afterTouchEnd'] == 0, f'Thumbstick can latch: {ctl}'
 
             # 8b. Tap-to-Walk & Auto-Interact on Billy + Pinch-to-Zoom + Pawn Shop Build Tap-to-Place
             ipad_tap = await cdp.eval('''(() => {

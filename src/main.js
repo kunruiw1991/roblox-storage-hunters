@@ -74,11 +74,12 @@ window.addEventListener(
   'pointerdown',
   (e) => {
     game.audio.unlock();
+    game.cancelAutoWalk(); // any finger anywhere (stick centre, FART, HUD) takes control back
     if (e.pointerType === 'touch' || e.pointerType === 'pen') {
       ui.notifyTouchPointer();
     }
   },
-  { passive: true }
+  { passive: true, capture: true }
 );
 
 // ---------------- KEYBOARD CONTROLS ----------------
@@ -108,6 +109,7 @@ window.addEventListener('keydown', (e) => {
   }
 
   game.keys.add(e.code);
+  if (!e.repeat) game.cancelAutoWalk();
 
   if (e.repeat) return;
 
@@ -136,11 +138,14 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keyup', (e) => {
+  if (e.code === 'MetaLeft' || e.code === 'MetaRight') game.keys.clear();
   game.keys.delete(e.code);
 });
 
 const resetAllInputs = () => {
   game.keys.clear();
+  game.cancelAutoWalk();
+  game.setInput(0, 0);
   game.touchInput.x = 0;
   game.touchInput.z = 0;
   game.manualOrbitDragging = false;
@@ -150,6 +155,26 @@ const resetAllInputs = () => {
 };
 
 window.addEventListener('blur', resetAllInputs);
+window.addEventListener('pagehide', resetAllInputs);
+// If every finger has left the glass, no stick input may survive (lost pointerup on iPadOS).
+const releaseIfNoTouches = (e) => {
+  if (e.touches && e.touches.length === 0) {
+    ui.resetTouchStick();
+    // independent of pointerup/touchend order. Drop only pointers that were already down, after the
+    // pointerup that may still follow this touchend has had its chance to register the tap.
+    const stale = [...activePointers.keys()];
+    setTimeout(() => {
+      for (const id of stale) activePointers.delete(id);
+      if (activePointers.size === 0) game.manualOrbitDragging = false;
+    }, 0);
+  }
+};
+window.addEventListener('touchend', releaseIfNoTouches, { passive: true });
+window.addEventListener('touchcancel', releaseIfNoTouches, { passive: true });
+// A key whose keyup was swallowed (Cmd/Alt combos, focus changes) must not keep walking.
+window.addEventListener('keydown', (e) => {
+  if (e.metaKey || e.altKey || e.ctrlKey) game.keys.clear();
+});
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) resetAllInputs();
 });
@@ -190,6 +215,8 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'touch' || e.pointerType === 'pen') {
     ui.notifyTouchPointer();
   }
+  // Touching the screen again always takes control back from a pending tap-to-walk.
+  game.cancelAutoWalk();
   activePointers.set(e.pointerId, {
     x: e.clientX,
     y: e.clientY,
@@ -245,6 +272,7 @@ canvas.addEventListener('pointermove', (e) => {
         const yawSpeed = e.pointerType === 'touch' ? 0.0068 : 0.0065;
         const pitchSpeed = e.pointerType === 'touch' ? 0.0046 : 0.0045;
         game.setCameraOrbit(game.camYaw - dx * yawSpeed, game.camPitch + dy * pitchSpeed);
+        game.orbitHold = 1.0; // chase camera pauses only while the finger is really dragging (+1 s)
       }
     }
   } else if (game.player.inPawnShop && game.buildTab && e.pointerType !== 'touch') {
@@ -257,7 +285,7 @@ const endOrbit = (e) => {
   if (!wasTracked) return;
 
   if (activePointers.size === 0) {
-    const shouldClick = e.pointerId === singlePointerId && !dragMoved && !pinchUsed;
+    const shouldClick = e.type === 'pointerup' && e.pointerId === singlePointerId && !dragMoved && !pinchUsed;
     singlePointerId = null;
     pinchPrevDist = 0;
     game.manualOrbitDragging = false;

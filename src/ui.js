@@ -373,6 +373,8 @@ export class RobloxUI {
       btn.addEventListener('click', () => this.closeModals());
     });
     this.el.backdrop.addEventListener('click', (e) => {
+      // The touch that opened a dialog also produces a click on the freshly shown backdrop; ignore it.
+      if (performance.now() - (this._modalOpenedAt || 0) < 450) return;
       if (e.target === this.el.backdrop) this.closeModals();
     });
 
@@ -435,7 +437,8 @@ export class RobloxUI {
       }
     };
     stickZone.addEventListener('pointerdown', (e) => {
-      if (this.stickPointerId !== null) return;
+      // A new finger on the stick always wins: a stale id from a lost pointerup must never latch input.
+      if (this.stickPointerId !== null) this.resetTouchStick();
       if (e.pointerType === 'touch' || e.pointerType === 'pen') {
         this._seenTouchPointer = true;
       }
@@ -462,6 +465,11 @@ export class RobloxUI {
     stickZone.addEventListener('pointerup', endStick);
     stickZone.addEventListener('pointercancel', endStick);
     stickZone.addEventListener('lostpointercapture', endStick);
+    const endStickGlobal = (e) => {
+      if (this.stickPointerId !== null && e.pointerId === this.stickPointerId) this.resetTouchStick();
+    };
+    window.addEventListener('pointerup', endStickGlobal, true);
+    window.addEventListener('pointercancel', endStickGlobal, true);
 
     this.el.btnTouchJump.addEventListener('pointerdown', (e) => {
       e.preventDefault();
@@ -558,6 +566,7 @@ export class RobloxUI {
   openRickModal(items, rarities) {
     this.closeModals(true);
     this.activeModal = 'rick';
+    this._modalOpenedAt = performance.now();
     this.el.backdrop.classList.remove('hidden');
     this.el.modalRick.classList.remove('hidden');
     this.renderRickGrid(items, rarities);
@@ -608,6 +617,7 @@ export class RobloxUI {
   openNpcModal(title, body, actions) {
     this.closeModals(true);
     this.activeModal = 'npc';
+    this._modalOpenedAt = performance.now();
     this.el.backdrop.classList.remove('hidden');
     this.el.modalNpc.classList.remove('hidden');
     this.el.npcTitle.textContent = title;
@@ -631,6 +641,7 @@ export class RobloxUI {
   openMenuModal(state, carTiers, audioState) {
     this.closeModals(true);
     this.activeModal = 'menu';
+    this._modalOpenedAt = performance.now();
     this.resetArmed = false;
     this.el.btnResetSave.textContent = 'New Game / Reset Save';
     this.el.backdrop.classList.remove('hidden');

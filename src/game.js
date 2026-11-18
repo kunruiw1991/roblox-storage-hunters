@@ -252,6 +252,7 @@ export class StorageHuntersGame {
       this.ui.showToast('Save restored — welcome back!', 2.2);
     }
 
+    if (this.player.driving) this.camYaw = this.car.yaw; // reload while in the car -> camera behind the nose
     this._syncAllVisuals();
     this._updateCamera(1.0);
   }
@@ -776,6 +777,7 @@ export class StorageHuntersGame {
   }
 
   queueJump() {
+    this.cancelAutoWalk();
     if (this.player.driving || this.auction.active || this.ui.activeModal) return;
     this.jumpQueued = true;
   }
@@ -931,6 +933,14 @@ export class StorageHuntersGame {
 
   clearWalkTarget() {
     this.walkTarget = null;
+  }
+
+  // Any new touch / key / button press takes control back from a pending tap-to-walk.
+  cancelAutoWalk() {
+    if (!this.walkTarget) return false;
+    this.walkTarget = null;
+    this.player.speed = 0;
+    return true;
   }
 
   setCameraOrbit(yaw, pitch) {
@@ -1295,6 +1305,7 @@ export class StorageHuntersGame {
 
   toggleDrive() {
     if (this.auction.active) return false;
+    this.ui.resetTouchStick(); // a held walk-stick must not become gas/steer (or vice versa); lift + push again
     if (this.player.driving) {
       // Exit car cleanly on clear left/right side
       this.player.driving = false;
@@ -1322,6 +1333,7 @@ export class StorageHuntersGame {
 
     // Enter car
     this.player.driving = true;
+    this.camYaw = this.car.yaw; // chase camera starts behind the nose so stick-up == screen-up
     this.buildTab = null;
     this.selectedCatalogId = null;
     this.world.updateBuildGhost(null, false, false);
@@ -2342,8 +2354,10 @@ export class StorageHuntersGame {
     if (best.worldDist <= best.interactDist) {
       this.walkTarget = null;
       this._executeTappedAction(best);
-    } else {
+    } else if (bestPxDist <= (isTouch ? 46 : 36) && best.worldDist <= 18) {
+      // Auto-walk only for a deliberate, direct tap on a nearby target (short, visible trip).
       this.walkTarget = {
+        timeLeft: 1.2 + best.worldDist / 9.4,
         x: best.tx,
         z: best.tz,
         stopDist: best.stopDist,
@@ -2374,6 +2388,7 @@ export class StorageHuntersGame {
     if (this.car.boostTimer > 0) {
       this.car.boostTimer = Math.max(0, this.car.boostTimer - dt);
     }
+    if (this.orbitHold > 0) this.orbitHold = Math.max(0, this.orbitHold - dt);
     if (this.player.celebrateTimer > 0) {
       this.player.celebrateTimer = Math.max(0, this.player.celebrateTimer - dt);
     }
@@ -2678,22 +2693,19 @@ export class StorageHuntersGame {
       const targetYaw = Math.atan2(wx, wz);
       this.player.yaw = lerpAngle(this.player.yaw, targetYaw, dt * 14);
 
-      // Gentle Roblox-style camera follow on touch when steering left/right so 1-thumb walking feels natural
-      const touchMag = Math.hypot(this.touchInput.x, this.touchInput.z);
-      if (
-        touchMag > 0.22 &&
-        !this.manualOrbitDragging &&
-        Math.abs(this.touchInput.x) > 0.25 &&
-        this.touchInput.z < 0.35
-      ) {
-        this.camYaw = lerpAngle(this.camYaw, this.player.yaw, dt * 0.95);
-      }
+      // Camera never rotates by itself while walking: the stick is camera-relative, so any automatic
+      // yaw follow feeds back into the heading and makes the avatar run in circles.
     } else if (this.walkTarget) {
       const wt = this.walkTarget;
       const dx = wt.x - this.player.x;
       const dz = wt.z - this.player.z;
       const dist = Math.hypot(dx, dz);
-      if (dist <= wt.stopDist) {
+      wt.timeLeft = (wt.timeLeft ?? 3) - dt;
+      if (wt.timeLeft <= 0) {
+        // Hard budget: an auto-walk can never keep running on its own.
+        this.walkTarget = null;
+        this.player.speed = 0;
+      } else if (dist <= wt.stopDist) {
         const target = wt.target;
         this.walkTarget = null;
         this.player.speed = 0;
@@ -2758,42 +2770,31 @@ export class StorageHuntersGame {
     const maxSpeed = tier.speed * owMult * boostMult;
     const accel = 18.0 * (this.car.overweight ? 0.68 : 1.0);
 
-    let throttle = -moveZ; // Keyboard W = -1 -> +1 forward
-    let steerInput = -moveX; // Keyboard A = -1 -> +1 left yaw
+    // Car-relative controls for keyboard AND thumbstick: up = gas, down = brake then reverse,
+    // left/right = steer. Nothing here depends on the camera, so the chase camera can never
+    // feed back into the heading (the old camera-relative stick made the car spin and flip-flop).
+    let throttle = -moveZ;
+    let steerInput = -moveX;
     const touchMag = Math.hypot(this.touchInput.x, this.touchInput.z);
-    const useTouchDirectional = !hasDirectInput && touchMag > 0.10;
-
-    if (useTouchDirectional) {
-      // Camera-relative directional thumbstick driving: push stick anywhere you want the car to go!
-      const fwdX = Math.sin(this.camYaw);
-      const fwdZ = Math.cos(this.camYaw);
-      const rightX = -Math.cos(this.camYaw);
-      const rightZ = Math.sin(this.camYaw);
-      const wx = rightX * this.touchInput.x - fwdX * this.touchInput.z;
-      const wz = rightZ * this.touchInput.x - fwdZ * this.touchInput.z;
-      const desiredYaw = Math.atan2(wx, wz);
-      const angleDiff = wrapAngle(desiredYaw - this.car.yaw);
-
-      if (Math.abs(angleDiff) > Math.PI * 0.78) {
-        if (this.car.speed > 2.2) {
-          // Smooth brake before shifting into reverse
-          throttle = -1.0;
-          steerInput = 0;
-        } else {
-          // Smooth reverse steering
-          throttle = -clamp(touchMag, 0.35, 1.0) * 0.72;
-          const revHeading = wrapAngle(desiredYaw + Math.PI);
-          const revDiff = wrapAngle(revHeading - this.car.yaw);
-          steerInput = clamp(-revDiff * 1.45, -1, 1);
-        }
-      } else {
-        steerInput = clamp(angleDiff * 1.75, -1, 1);
-        const turnSlow = Math.abs(angleDiff) > 1.25 ? 0.68 : 1.0;
-        throttle = clamp(touchMag, 0.38, 1.0) * turnSlow;
+    const usingStick = !hasDirectInput && touchMag > 0.10;
+    if (usingStick) {
+      const dz = Math.abs(moveZ) < 0.22 ? 0 : (Math.abs(moveZ) - 0.22) / 0.78;
+      const dx = Math.abs(moveX) < 0.18 ? 0 : (Math.abs(moveX) - 0.18) / 0.82;
+      throttle = -Math.sign(moveZ) * dz;
+      steerInput = -Math.sign(moveX) * dx * 0.85;
+      // Stick pushed sideways only: roll gently forward while turning, so "push right" still
+      // visibly goes right for a small child. Capped at a slow crawl and stops on release.
+      if (throttle === 0 && dx > 0.2 && this.car.speed >= -0.4) {
+        throttle = this.car.speed < 6.0 ? 0.5 : 0;
+        steerInput *= 0.55; // sideways-only push = wide gentle arc, not a pivot spin
       }
     }
+    // Pulling back while rolling forward brakes first instead of slamming into reverse.
+    const braking = throttle < -0.05 && this.car.speed > 0.4;
 
-    if (Math.abs(throttle) > 0.05) {
+    if (braking) {
+      this.car.speed = Math.max(0, this.car.speed - 26.0 * dt);
+    } else if (Math.abs(throttle) > 0.05) {
       this.car.speed += throttle * accel * dt;
     } else {
       const drag = Math.sign(this.car.speed) * Math.min(Math.abs(this.car.speed), 14.0 * dt);
@@ -2802,13 +2803,10 @@ export class StorageHuntersGame {
     this.car.speed = clamp(this.car.speed, -maxSpeed * 0.55, maxSpeed);
     this.car.steer = lerpAngle(this.car.steer, steerInput * 0.52, dt * 10);
 
-    if (Math.abs(this.car.speed) > 0.25 || (useTouchDirectional && Math.abs(steerInput) > 0.08)) {
-      const dir = Math.abs(this.car.speed) > 0.05 ? Math.sign(this.car.speed) : throttle >= 0 ? 1 : -1;
-      const speedFactor = useTouchDirectional
-        ? clamp(Math.abs(this.car.speed) / 5.5, 0.55, 1.12)
-        : clamp(Math.abs(this.car.speed) / 7.0, 0.35, 1.0);
-      const baseTurn = useTouchDirectional ? 2.55 : 2.15;
-      this.car.yaw = wrapAngle(this.car.yaw + steerInput * baseTurn * speedFactor * dir * dt);
+    if (Math.abs(this.car.speed) > 0.25) {
+      const dir = Math.sign(this.car.speed);
+      const speedFactor = clamp(Math.abs(this.car.speed) / 7.0, 0.35, 1.0);
+      this.car.yaw = wrapAngle(this.car.yaw + steerInput * 2.15 * speedFactor * dir * dt);
     }
 
     const nx = this.car.x + Math.sin(this.car.yaw) * this.car.speed * dt;
@@ -2833,9 +2831,9 @@ export class StorageHuntersGame {
     this.player.speed = Math.abs(this.car.speed);
 
     // Smooth camera follow behind car heading unless player drags orbit
-    if (!this.manualOrbitDragging && Math.abs(this.car.speed) > 1.2) {
-      const desiredYaw = this.car.speed >= 0 ? this.car.yaw : wrapAngle(this.car.yaw + Math.PI);
-      this.camYaw = lerpAngle(this.camYaw, desiredYaw, dt * 2.4);
+    if (!(this.orbitHold > 0) && Math.abs(this.car.speed) > 0.25) {
+      // Always chase from behind the car's nose (never flip 180 degrees when reversing).
+      this.camYaw = lerpAngle(this.camYaw, this.car.yaw, dt * 2.4);
     }
   }
 
